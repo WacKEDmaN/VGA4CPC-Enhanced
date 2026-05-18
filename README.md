@@ -17,6 +17,24 @@ the original timings and PIO designs.
 
 ---
 
+## Screenshots
+
+CPC BASIC 1.1 prompt on an Awa 128K — the two build variants side by side:
+
+| NORMAL | NORMAL_SCANLINES |
+|:---:|:---:|
+| ![NORMAL build — clean line-doubled output](images/VGA4CPC_NORMAL.png) | ![NORMAL_SCANLINES build — CRT-style dark gap between scanlines](images/VGA4CPC_SCANLINES.png) |
+
+Running real CPC software — Batman intro logo and a mode-0 cutscene
+illustrating the full colour range and borders the scan-doubler
+preserves:
+
+| | |
+|:---:|:---:|
+| ![Batman intro logo](images/demo_batman_logo.png) | ![Mode-0 cutscene from Batman](images/demo_batman_scene.png) |
+
+---
+
 ## Hardware
 
 - Raspberry Pi Pico (RP2040)
