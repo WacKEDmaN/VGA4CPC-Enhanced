@@ -17,11 +17,16 @@
     wait 0 gpio 10      ; wait until VSYNC is over → active video begins
     wait 0 gpio 6       ; wait for HSYNC start (CSYNC falling)
 
-    ; ~3.5 µs wait before re-checking CSYNC (smooth-scroll tolerance)
+    ; Exactly 3.5 µs wait (448 cycles @ 128 MHz) before re-checking
+    ; CSYNC — smooth-scroll tolerance. The trailing nop[30] is part of
+    ; the upstream timing budget and matters: getting this short by even
+    ; a few cycles drifts the sample point off the CPC pixel centre and
+    ; produces edge flicker / coloured fringes around transitions.
+    ;   1 + 13*32 + 31 = 448
     set x, 12
 waitloop:
     jmp x--, waitloop [31]
-    nop [21]
+    nop [30]
 
     wait 1 gpio 6       ; wait for HSYNC end (CSYNC rising)
 

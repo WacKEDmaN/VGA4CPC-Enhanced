@@ -170,6 +170,66 @@ capture deadline at 128 MHz.
 
 ---
 
+## Known limitations
+
+### Soft colour fringing at sharp colour transitions
+
+If you zoom in on the captured image — particularly at white text on a
+coloured background in mode 2 — you'll see a faint coloured halo (2–4
+pixels wide) around glyph edges, and the background close to text is
+not perfectly uniform.
+
+This is a property of the **analog signal path on the PCB**, not the
+firmware. The CPC's gate-array RGB output has nonzero rise/fall times
+and some post-transition ringing; the TLV3202 comparators on the
+VGA4CPC PCB digitise whatever they see at the sample instant,
+including those in-flight values. Because the Pico's capture clock and
+the CPC's pixel clock aren't phase-locked to each other, the *exact*
+wrong value caught at each transition drifts slightly between frames
+— producing a subtle shimmer as well.
+
+Side-by-side testing confirms this firmware shows **noticeably less
+fringing than the upstream grzegorz-gr/vga4cpc firmware** on the same
+PCB, so what's here is essentially the best the unbuffered comparator
++ R-2R DAC path can deliver on the original Pico (RP2040). On a solid
+colour field (e.g. `CLS`) there are no artefacts at all — the issue is
+strictly transition-related.
+
+### Cursor appears half-bright in screenshots
+
+The BASIC 1.1 cursor flashes by XOR-ing the screen byte in CPC RAM
+~25 times per second. A USB-HDMI capture dongle that samples at 30 fps
+will frequently catch a frame *during* the inversion, producing a
+half-bright appearance in the screenshot. On the actual VGA monitor
+the cursor flashes cleanly between PEN and PAPER colours — there's no
+firmware bug here.
+
+---
+
+## Pico 2 roadmap
+
+The PCB is pin-compatible with the **Raspberry Pi Pico 2 (RP2350)**,
+which would enable meaningful improvements:
+
+| Pico 2 resource          | What we'd use it for                                |
+|--------------------------|-----------------------------------------------------|
+| 520 KB SRAM (vs 264 KB)  | True double-buffered framebuffer — eliminates any output-side tearing race and unlocks safe post-capture filtering on Core 1 |
+| Up to ~200 MHz core clock | 12 cycles per CPC pixel @ 192 MHz; could sample twice per pixel with majority voting to reject in-flight comparator values |
+| 3rd PIO block (12 SMs)   | Dedicated CSYNC-tracking / clock-recovery SM to phase-lock our sample clock to the CPC's pixel clock |
+| Cortex-M33 @ 150 MHz     | Headroom for inline filtering / decoding on either core |
+
+Most importantly, the **frame-to-frame shimmer** (from the unlocked
+sample clock) and the **dual-read output race** (from single-buffered
+output) would both be solvable. The residual *analog* fringing from
+the comparators themselves would remain unless paired with a PCB-level
+mod (RC filter on comparator inputs, buffer chip on the DAC outputs,
+or shorter CPC cable).
+
+No Pico 2 port work has started — this section is here so anyone
+picking up the project knows where the real headroom is.
+
+---
+
 ## Credits
 
 - **gregg** (grzegorz-gr) — original [`vga4cpc`](https://github.com/grzegorz-gr/vga4cpc) PCB design and the

@@ -75,8 +75,33 @@ bool capture_signal_present(void) {
 // The captured 6-bit thermometer code is laid out as
 //   bit5=R_HI bit4=R_LO bit3=G_HI bit2=G_LO bit1=B_HI bit0=B_LO
 // which matches our 2-2-2 DAC pinout exactly (bits[5:4]=R, [3:2]=G,
-// [1:0]=B). The VGA SM emits the raw byte directly — no LUT needed.
+// [1:0]=B). The VGA SM emits the raw byte directly — no palette LUT.
+//
+// "Level-2" sanitisation
+// ----------------------
+// The CPC's three native voltage levels per channel produce thermometer
+// codes 00, 01, 11 (DAC levels 0/1/3). The fourth code, 10 (HI bit set
+// but LO not), is NOT a valid CPC level — but it can appear briefly
+// at sharp colour transitions if the rgbin SM samples while the two
+// comparators are mid-flip (HI has swung, LO hasn't yet). On the DAC
+// it maps to half-bright voltage, so a one-pixel halo appears next to
+// every text edge.
+//
+// Fix: after each line's DMA completes, force LO := LO | HI per channel.
+//   byte |= (byte >> 1) & 0x15
+//   00 → 00, 01 → 01, 10 → 11 (promoted), 11 → 11
+// Applied 32 bits at a time to the *previous* line, while the current
+// line's DMA is still running (~50 µs in flight, completed well before
+// we touch it). Costs ~6 µs per line; fits in the post-DMA idle window.
 // ---------------------------------------------------------------------
+static inline void __not_in_flash_func(sanitize_line)(uint8_t *line8) {
+    uint32_t *w = (uint32_t *)line8;
+    for (int i = 0; i < FB_W / 4; i++) {
+        uint32_t v = w[i];
+        w[i] = v | ((v >> 1) & 0x15151515u);
+    }
+}
+
 void __not_in_flash_func(capture_run_forever)(void) {
     int line = 0;
     uint32_t frame_count = 0;
@@ -103,6 +128,7 @@ void __not_in_flash_func(capture_run_forever)(void) {
         }
         fb_new_frame();
         line = 0;
+        uint8_t *prev_fb = NULL;
 
         while (!gpio_get(PIN_VSYNC_GEN) && line < FB_H) {
             // HSYNC start (CSYNC falling)
@@ -128,8 +154,20 @@ void __not_in_flash_func(capture_run_forever)(void) {
                                       FB_W,
                                       true);
             }
+            // Clean up the previous line (its DMA finished long ago).
+            // Runs concurrently with the just-kicked DMA on *this* line.
+            if (prev_fb) sanitize_line(prev_fb);
+            prev_fb = fb;
             line++;
         }
-    frame_end: ;
+    frame_end:
+        // Final line of the frame still needs cleaning before we leave.
+        if (prev_fb) {
+            // Make sure its DMA actually completed (always true in practice
+            // — ~50 µs DMA vs ~64 µs line — but cheap to be safe).
+            while (dma_channel_is_busy((uint)dma_cap_channel))
+                tight_loop_contents();
+            sanitize_line(prev_fb);
+        }
     }
 }
