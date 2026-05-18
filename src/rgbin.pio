@@ -3,8 +3,8 @@
 ; Each push transfers one 6-bit sample as a 32-bit word (low byte).
 ; DMA uses DMA_SIZE_8 to extract just the low byte.
 ;
-; SM clock = sys_clock (125 MHz). 8 cycles per sample → 15.625 MHz
-; sample rate (reference targets 16 MHz at 128 MHz sys_clock).
+; SM clock = sys_clock (128 MHz). 8 cycles per sample → 16 MHz
+; sample rate, matching the CPC's mode-2 pixel clock exactly.
 
 .program rgbin
 

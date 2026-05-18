@@ -54,20 +54,33 @@ preserves:
 |-------|-------------------------------------------|
 | 0–5   | CPC RGB input (B_LO, B_HI, G_LO, G_HI, R_LO, R_HI) |
 | 6     | CSYNC input (active low)                  |
-| 10    | vsyncgen output (wire to GPIO 7 on PCB)   |
+| 10    | vsyncgen output (must be wired to GPIO 7 — see below) |
 | 12    | VGA HSYNC                                 |
 | 13    | VGA VSYNC                                 |
 | 14–19 | 6-bit R-2R DAC (R/G/B × 2 bits each)      |
 | 25    | LED                                       |
 | 26    | 50/60 Hz mode switch (closed/LOW = 50 Hz) |
 
+> **⚠ Required PCB jumper: GPIO 10 → GPIO 7.**
+> The capture path generates a clean VSYNC signal in software (PIO1
+> SM0 derives it from the noisy composite CSYNC) and drives it out on
+> GPIO 10. The rgbin SM then reads that VSYNC back via GPIO 7. The
+> VGA4CPC PCB exposes both pins — they need to be jumpered together
+> for capture to work at all. Without this jumper the LED will sit
+> solid-on (waiting for VSYNC forever) and no picture appears.
+
 ---
 
 ## Build
 
 Requirements:
-- Raspberry Pi Pico SDK v1.5.1 (default path: `C:\Program Files\Raspberry Pi\Pico SDK v1.5.1`)
-- CMake + Ninja + arm-none-eabi-gcc (all bundled with the SDK installer)
+- **Raspberry Pi Pico SDK v1.5.1** — install from
+  [the official Pico setup guide](https://github.com/raspberrypi/pico-sdk#quick-start-your-own-project).
+  The Windows installer bundles everything; on Linux/macOS you'll set
+  `PICO_SDK_PATH` to point at your checkout.
+- **CMake**, **Ninja**, and **arm-none-eabi-gcc** (all included in the
+  Windows Pico installer; install separately on Linux/macOS via your
+  package manager).
 
 ### Windows one-click
 
@@ -79,13 +92,22 @@ Builds both variants into `dist\`:
 - `vga4cpc_enhanced_NORMAL.uf2`
 - `vga4cpc_enhanced_NORMAL_SCANLINES.uf2`
 
-### Manual
+The script assumes the default Windows SDK path
+(`C:\Program Files\Raspberry Pi\Pico SDK v1.5.1`). Edit the `SDK`
+variable at the top of `build.cmd` if yours lives elsewhere.
+
+### Manual (any platform)
 
 ```sh
 mkdir build && cd build
-cmake -G Ninja -DSCANLINES=OFF ..   # or -DSCANLINES=ON
+cmake -G Ninja -DPICO_SDK_PATH=/path/to/pico-sdk -DSCANLINES=OFF ..
 ninja
 ```
+
+`PICO_SDK_PATH` can also be set as an environment variable in your
+shell so you don't need to repeat it. The `CMakeLists.txt` default
+points at the Windows install location, so passing `-DPICO_SDK_PATH`
+explicitly is recommended on Linux/macOS.
 
 The `SCANLINES=ON` variant inserts a black line between each pair of
 output lines for a CRT-style scanline look.
@@ -275,7 +297,10 @@ picking up the project knows where the real headroom is.
 
 ## License
 
-The PIO programs are derived from the upstream
+Released into the **public domain** under [The Unlicense](LICENSE).
+Do whatever you want with it — no warranty.
+
+The PIO programs in `src/` are adapted from the upstream
 [grzegorz-gr/vga4cpc](https://github.com/grzegorz-gr/vga4cpc) project
-and remain under that project's license. The remaining C code in this
-repository is provided as-is for hobbyist use.
+(which itself has no stated license); the adaptations here are also
+public-domain.

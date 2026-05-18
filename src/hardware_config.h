@@ -39,7 +39,7 @@
 #define SM_VSYNCGEN      0
 #define SM_RGBIN         1
 
-// VGA output pin bases (must match scanvideo's original pin assignments)
+// VGA output pin bases (matches the upstream grzegorz-gr/vga4cpc PCB layout)
 #define PIN_VGA_HSYNC    12
 #define PIN_VGA_VSYNC    13
 #define PIN_VGA_RGB_BASE 14   // GPIO 14..19 — 6-bit R-2R DAC
@@ -78,7 +78,7 @@
 // Framebuffer: one CPC frame, 1 byte/pixel (2-2-2 DAC value)
 // ---------------------------------------------------------------------
 #define FB_W             CPC_ACTIVE_W   // 800
-#define FB_H             CPC_ACTIVE_H   // 240
+#define FB_H             CPC_ACTIVE_H   // 288
 #define FB_STRIDE        FB_W
 
 // Horizontal crop: CPC captures 800 px per line, VGA shows 640. With

@@ -8,10 +8,10 @@
 extern uint8_t framebuf[FB_H][FB_STRIDE];
 
 // =====================================================================
-// Single-buffer framebuffer: 800 × 240 bytes (1 byte = 2-2-2 DAC value)
-// Writer: capture DMA IRQ (Core 0)
-// Reader: scanvideo fill_scanline (Core 1)
-// Synchronised via per-line volatile commit bits + DMB fences.
+// Single-buffer framebuffer: 800 × 288 bytes (1 byte = 2-2-2 DAC value).
+// Writer: capture DMA (Core 0, one row per CPC line).
+// Reader: VGA output 4-channel DMA chain (each row read twice in a row
+//         for scan-doubled output).
 // =====================================================================
 
 void fb_init(void);

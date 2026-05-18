@@ -10,7 +10,7 @@
 ; HSYNC; if LOW another pulse is already in progress, which only
 ; happens during the VSYNC serration interval → flag VSYNC.
 ;
-; SM clock = sys_clock / 8 = 15.625 MHz at sys_clock = 125 MHz.
+; SM clock = sys_clock / 8 = 16 MHz at sys_clock = 128 MHz.
 
 .program vsyncgen
 

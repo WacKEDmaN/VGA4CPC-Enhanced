@@ -1,3 +1,12 @@
+// =====================================================================
+// capture.c — CPC RGB capture pipeline (PIO + DMA + Core 0 polling loop)
+//
+// Owns Core 0 forever once capture_run_forever() is entered. Tracks
+// CSYNC/VSYNC edges on the input, configures a fresh per-line DMA from
+// the rgbin SM's RX FIFO into a framebuffer row, and runs a cheap
+// thermometer-code sanitiser on the previous line while the next
+// line's DMA is in flight.
+// =====================================================================
 #include "capture.h"
 #include "hardware_config.h"
 #include "framebuffer.h"
