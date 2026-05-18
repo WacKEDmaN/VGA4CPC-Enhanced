@@ -25,7 +25,7 @@ the original timings and PIO designs.
 > the scan-doubler output — on a VGA monitor connected directly to the
 > PCB the image is appreciably sharper.*
 
-CPC BASIC 1.1 prompt on an Awa 128K — the two build variants side by side:
+CPC BASIC 1.1 prompt on an Amstrad 6128 — the two build variants side by side:
 
 | NORMAL | NORMAL_SCANLINES |
 |:---:|:---:|
