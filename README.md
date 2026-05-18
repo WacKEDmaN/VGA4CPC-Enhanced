@@ -131,9 +131,11 @@ directly from there if you don't want to build from source:
    - **closed / LOW** → 576p50 (CEA-861, ~50.08 Hz, scaled to ~800px wide)
    - **open / HIGH**  → 800×600p60 (DMT)
 
-The LED blinks at ~1 Hz when CPC frames are being captured. Solid (no
-flash) means it's waiting for a VSYNC signal — either no CPC connected
-or the CPC has been powered off.
+The on-board LED (GPIO 25, PWM-dimmed to ~half brightness) indicates
+sync state:
+- **Solid (dim)** → CPC sync detected, frames being captured.
+- **Flashing at ~1 Hz** → waiting for sync (no CPC connected, CPC
+  powered off, or signal loss).
 
 ### "No signal" test pattern
 

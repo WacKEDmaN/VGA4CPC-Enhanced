@@ -23,9 +23,8 @@
 int main(void) {
     set_sys_clock_khz(SYS_CLOCK_KHZ, true);
 
-    gpio_init(PIN_LED);
-    gpio_set_dir(PIN_LED, GPIO_OUT);
-    gpio_put(PIN_LED, 1);
+    // LED stays off during init — capture_run_forever takes it over
+    // and drives it via PWM for the rest of runtime.
 
     fb_init();
     // Paint the "no signal" test pattern. The capture loop will

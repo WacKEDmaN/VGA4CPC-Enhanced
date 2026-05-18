@@ -17,6 +17,7 @@
 #include "hardware/pio.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
+#include "hardware/pwm.h"
 #include "hardware/timer.h"
 #include "pico/stdlib.h"
 #include "pico/platform.h"
@@ -124,16 +125,23 @@ static inline void __not_in_flash_func(sanitize_line)(uint8_t *line8) {
 
 void __not_in_flash_func(capture_run_forever)(void) {
     int line = 0;
-    uint32_t frame_count = 0;
     uint32_t last_vsync_us = time_us_32();
     bool     test_pattern_shown = false;   // true while no-signal card is up
 
-    // LED diagnostic:
-    //   Solid ON     → waiting for first VSYNC (vsyncgen PIO not producing edges)
-    //   ~1 Hz blink  → frames detected normally
-    gpio_init(PIN_LED);
-    gpio_set_dir(PIN_LED, GPIO_OUT);
-    gpio_put(PIN_LED, 1);
+    // LED diagnostic (PWM-dimmed to ~half brightness so it's not blindingly
+    // bright in a dark room):
+    //   ~1 Hz flash  → waiting for sync (CPC off / disconnected)
+    //   Solid (dim)  → CPC sync detected, frames being captured
+    //
+    // GPIO 25 lives on PWM slice 4, channel B. 8-bit wrap (0..255);
+    // level 128 = 50% duty cycle.
+    enum { LED_HALF = 128, LED_OFF = 0, LED_WRAP = 255 };
+    gpio_set_function(PIN_LED, GPIO_FUNC_PWM);
+    uint led_slice = pwm_gpio_to_slice_num(PIN_LED);
+    uint led_chan  = pwm_gpio_to_channel(PIN_LED);
+    pwm_set_wrap(led_slice, LED_WRAP);
+    pwm_set_chan_level(led_slice, led_chan, LED_OFF);
+    pwm_set_enabled(led_slice, true);
 
     while (1) {
         // VSYNC_GEN is HIGH during VSYNC blanking, LOW otherwise.
@@ -141,20 +149,30 @@ void __not_in_flash_func(capture_run_forever)(void) {
         // triggers a test-pattern repaint after NO_SIGNAL_TIMEOUT_US.
         uint32_t poll = 0;
         while (!gpio_get(PIN_VSYNC_GEN)) {
-            if ((++poll & 0xFFFu) == 0u &&
-                !test_pattern_shown &&
-                (time_us_32() - last_vsync_us) > NO_SIGNAL_TIMEOUT_US) {
-                fb_paint_test_pattern();
-                test_pattern_shown = true;
+            if ((++poll & 0xFFFu) == 0u) {
+                // Flash the LED at ~1 Hz while we're waiting for sync.
+                bool led_on = ((time_us_32() / 500000u) & 1u) == 0u;
+                pwm_set_chan_level(led_slice, led_chan,
+                                   led_on ? LED_HALF : LED_OFF);
+                if (!test_pattern_shown &&
+                    (time_us_32() - last_vsync_us) > NO_SIGNAL_TIMEOUT_US) {
+                    fb_paint_test_pattern();
+                    test_pattern_shown = true;
+                }
             }
         }
         poll = 0;
         while (gpio_get(PIN_VSYNC_GEN)) {
-            if ((++poll & 0xFFFu) == 0u &&
-                !test_pattern_shown &&
-                (time_us_32() - last_vsync_us) > NO_SIGNAL_TIMEOUT_US) {
-                fb_paint_test_pattern();
-                test_pattern_shown = true;
+            if ((++poll & 0xFFFu) == 0u) {
+                // Flash the LED at ~1 Hz while we're waiting for sync.
+                bool led_on = ((time_us_32() / 500000u) & 1u) == 0u;
+                pwm_set_chan_level(led_slice, led_chan,
+                                   led_on ? LED_HALF : LED_OFF);
+                if (!test_pattern_shown &&
+                    (time_us_32() - last_vsync_us) > NO_SIGNAL_TIMEOUT_US) {
+                    fb_paint_test_pattern();
+                    test_pattern_shown = true;
+                }
             }
         }
         last_vsync_us = time_us_32();
@@ -162,8 +180,8 @@ void __not_in_flash_func(capture_run_forever)(void) {
         // period will repaint the card.
         test_pattern_shown = false;
 
-        frame_count++;
-        gpio_put(PIN_LED, (frame_count / 25u) & 1u);
+        // Sync is good → LED solid at half brightness.
+        pwm_set_chan_level(led_slice, led_chan, LED_HALF);
 
         // Black-fill the tail of the previous frame.
         for (int y = line; y < FB_H; y++) {
