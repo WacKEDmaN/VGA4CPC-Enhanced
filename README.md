@@ -267,6 +267,9 @@ picking up the project knows where the real headroom is.
   are taken from that project, with only minor refactoring.
 - **Hunter Adams** — the original VGA-from-PIO timing approach the
   upstream firmware credits as its basis.
+- **All C code, build scripts, and documentation in this repository
+  were written by [Claude Code](https://claude.com/claude-code)
+  (Anthropic) under direction from the project owner.**
 
 ---
 
