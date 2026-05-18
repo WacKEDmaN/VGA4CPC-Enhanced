@@ -139,6 +139,8 @@ sync state:
 
 ### "No signal" test pattern
 
+![No-signal test card as displayed on the monitor](images/NO_SIGNAL.png)
+
 When no CPC signal is present, the firmware paints a "NO SIGNAL /
 VGA4CPC-ENHANCED" test card into the framebuffer so the monitor
 isn't left showing a frozen last-frame or a blank screen.
