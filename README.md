@@ -200,15 +200,6 @@ PCB, so what's here is essentially the best the unbuffered comparator
 colour field (e.g. `CLS`) there are no artefacts at all — the issue is
 strictly transition-related.
 
-### Cursor appears half-bright in screenshots
-
-The BASIC 1.1 cursor flashes by XOR-ing the screen byte in CPC RAM
-~25 times per second. A USB-HDMI capture dongle that samples at 30 fps
-will frequently catch a frame *during* the inversion, producing a
-half-bright appearance in the screenshot. On the actual VGA monitor
-the cursor flashes cleanly between PEN and PAPER colours — there's no
-firmware bug here.
-
 ---
 
 ## Pico 2 roadmap
