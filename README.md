@@ -126,8 +126,13 @@ sending video.
   into a framebuffer row.
 - **PIO0** runs the VGA output side: three SMs cooperating via PIO
   IRQs to produce HSYNC/VSYNC/RGB.
-- **4-channel DMA chain** streams the framebuffer to the RGB SM's TX
-  FIFO, each CPC line read twice in a row to scan-double up to 576p.
+- **4-channel DMA chain** produces line-doubled output by streaming
+  each framebuffer row to the RGB SM's TX FIFO twice in a row — so
+  288 captured CPC lines drive 576 VGA output lines, scan-doubling to
+  576p without any extra capture or memory cost. (Each CPC line is
+  still captured only once; the duplication happens entirely on the
+  output side, via the DMA's source-pointer table listing each row
+  pointer twice.)
 
 ### Pixel byte layout
 
