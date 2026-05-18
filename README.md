@@ -158,9 +158,11 @@ isn't left showing a frozen last-frame or a blank screen.
 
 The card itself shows a "NO SIGNAL" banner, a castellation row, six
 full-bright colour bars (Y/C/G/M/R/B), a frequency burst pattern, a
-4-step greyscale ramp, a "VGA4CPC-ENHANCED" banner, and a yellow
-strip with a central red marker — drawn procedurally; no embedded
-image asset.
+4-step greyscale ramp, a "VGA4CPC-ENHANCED" banner, and a 27-cell
+strip showing every native CPC colour (3³ combinations of the three
+per-channel voltage levels). All drawn procedurally; no embedded
+image asset. Text is rendered in a verbatim copy of the CPC6128 OS
+ROM character set.
 
 ---
 

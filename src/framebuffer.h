@@ -24,7 +24,7 @@ void fb_init(void);
 // Layout (top to bottom, totalling FB_H = 288 rows):
 //   "NO SIGNAL" banner → castellation row → 6 colour bars → frequency
 //   burst (8 stripe-density groups) → 4-step greyscale ramp →
-//   "VGA4CPC-ENHANCED" banner → yellow strip with central red marker.
+//   "VGA4CPC-ENHANCED" banner → 27-cell strip of every CPC-native colour.
 void fb_paint_test_pattern(void);
 
 // Write pointer for line n (0..FB_H-1). Returns NULL if out of range.
