@@ -70,8 +70,14 @@ output lines for a CRT-style scanline look.
 
 ## Flash & use
 
+Prebuilt firmware images are committed to [`dist/`](dist/) — grab one
+directly from there if you don't want to build from source:
+
+- [`dist/vga4cpc_enhanced_NORMAL.uf2`](dist/vga4cpc_enhanced_NORMAL.uf2)
+- [`dist/vga4cpc_enhanced_NORMAL_SCANLINES.uf2`](dist/vga4cpc_enhanced_NORMAL_SCANLINES.uf2)
+
 1. Hold BOOTSEL while plugging the Pico into USB, then drop one of the
-   `.uf2` files onto the `RPI-RP2` drive.
+   `.uf2` files from `dist/` onto the `RPI-RP2` drive.
 2. Plug the VGA cable into your monitor.
 3. Connect the CPC's RGB cable to the PCB.
 4. Pick the output mode with the slide switch on GPIO 26:
