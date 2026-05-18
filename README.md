@@ -195,8 +195,9 @@ wrong value caught at each transition drifts slightly between frames
 
 Side-by-side testing confirms this firmware shows **noticeably less
 fringing than the upstream grzegorz-gr/vga4cpc firmware** on the same
-PCB, so what's here is essentially the best the unbuffered comparator
-+ R-2R DAC path can deliver on the original Pico (RP2040). On a solid
+PCB, so what's here is essentially the best the unbuffered
+comparator and R-2R DAC path can deliver on the original Pico
+(RP2040). On a solid
 colour field (e.g. `CLS`) there are no artefacts at all — the issue is
 strictly transition-related.
 
