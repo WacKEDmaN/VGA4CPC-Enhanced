@@ -39,6 +39,14 @@ preserves:
 |:---:|:---:|
 | ![Batman intro logo](images/demo_batman_logo.png) | ![Mode-0 cutscene from Batman](images/demo_batman_scene.png) |
 
+### Videos
+
+Click through to YouTube for live captures of the firmware running:
+
+| NORMAL + "no signal" hand-off | NORMAL_SCANLINES |
+|:---:|:---:|
+| [![NORMAL build live, with the "no signal" card switching in when the CPC powers off](https://img.youtube.com/vi/u6UePIkd_Jg/hqdefault.jpg)](https://www.youtube.com/watch?v=u6UePIkd_Jg) | [![NORMAL_SCANLINES build live, showing the CRT-style dark-gap scanlines](https://img.youtube.com/vi/mkgNcqdlhVY/hqdefault.jpg)](https://www.youtube.com/watch?v=mkgNcqdlhVY) |
+
 ---
 
 ## Hardware
@@ -72,53 +80,10 @@ preserves:
 
 ---
 
-## Build
-
-Requirements:
-- **Raspberry Pi Pico SDK v1.5.1** — install from
-  [the official Pico setup guide](https://github.com/raspberrypi/pico-sdk#quick-start-your-own-project).
-  The Windows installer bundles everything; on Linux/macOS you'll set
-  `PICO_SDK_PATH` to point at your checkout.
-- **CMake**, **Ninja**, and **arm-none-eabi-gcc** (all included in the
-  Windows Pico installer; install separately on Linux/macOS via your
-  package manager).
-
-### Windows one-click
-
-```cmd
-build.cmd
-```
-
-Builds both variants into `dist\`:
-- `vga4cpc_enhanced_NORMAL.uf2`
-- `vga4cpc_enhanced_NORMAL_SCANLINES.uf2`
-
-The script assumes the default Windows SDK path
-(`C:\Program Files\Raspberry Pi\Pico SDK v1.5.1`). Edit the `SDK`
-variable at the top of `build.cmd` if yours lives elsewhere.
-
-### Manual (any platform)
-
-```sh
-mkdir build && cd build
-cmake -G Ninja -DPICO_SDK_PATH=/path/to/pico-sdk -DSCANLINES=OFF ..
-ninja
-```
-
-`PICO_SDK_PATH` can also be set as an environment variable in your
-shell so you don't need to repeat it. The `CMakeLists.txt` default
-points at the Windows install location, so passing `-DPICO_SDK_PATH`
-explicitly is recommended on Linux/macOS.
-
-The `SCANLINES=ON` variant inserts a black line between each pair of
-output lines for a CRT-style scanline look.
-
----
-
 ## Flash & use
 
-Prebuilt firmware images are committed to [`dist/`](dist/) — grab one
-directly from there if you don't want to build from source:
+**Most users want this section, not the Build section below.** Prebuilt
+firmware images are committed to [`dist/`](dist/) — grab one and flash:
 
 - [`dist/vga4cpc_enhanced_NORMAL.uf2`](dist/vga4cpc_enhanced_NORMAL.uf2)
 - [`dist/vga4cpc_enhanced_NORMAL_SCANLINES.uf2`](dist/vga4cpc_enhanced_NORMAL_SCANLINES.uf2)
@@ -163,6 +128,52 @@ strip showing every native CPC colour (3³ combinations of the three
 per-channel voltage levels). All drawn procedurally; no embedded
 image asset. Text is rendered in a verbatim copy of the CPC6128 OS
 ROM character set.
+
+---
+
+## Build
+
+Only needed if you want to modify the firmware. Prebuilt UF2s are in
+[`dist/`](dist/) — see *Flash & use* above.
+
+Requirements:
+- **Raspberry Pi Pico SDK v1.5.1** — install from
+  [the official Pico setup guide](https://github.com/raspberrypi/pico-sdk#quick-start-your-own-project).
+  The Windows installer bundles everything; on Linux/macOS you'll set
+  `PICO_SDK_PATH` to point at your checkout.
+- **CMake**, **Ninja**, and **arm-none-eabi-gcc** (all included in the
+  Windows Pico installer; install separately on Linux/macOS via your
+  package manager).
+
+### Windows one-click
+
+```cmd
+build.cmd
+```
+
+Builds both variants into `dist\`:
+- `vga4cpc_enhanced_NORMAL.uf2`
+- `vga4cpc_enhanced_NORMAL_SCANLINES.uf2`
+
+The script assumes the default Windows SDK path
+(`C:\Program Files\Raspberry Pi\Pico SDK v1.5.1`). Edit the `SDK`
+variable at the top of `build.cmd` if yours lives elsewhere.
+
+### Manual (any platform)
+
+```sh
+mkdir build && cd build
+cmake -G Ninja -DPICO_SDK_PATH=/path/to/pico-sdk -DSCANLINES=OFF ..
+ninja
+```
+
+`PICO_SDK_PATH` can also be set as an environment variable in your
+shell so you don't need to repeat it. The `CMakeLists.txt` default
+points at the Windows install location, so passing `-DPICO_SDK_PATH`
+explicitly is recommended on Linux/macOS.
+
+The `SCANLINES=ON` variant inserts a black line between each pair of
+output lines for a CRT-style scanline look.
 
 ---
 
