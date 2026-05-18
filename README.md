@@ -19,6 +19,12 @@ the original timings and PIO designs.
 
 ## Screenshots
 
+> *Captured via: CPC → VGA4CPC PCB (running this firmware) → VGA-to-HDMI
+> converter → USB-HDMI capture dongle → PC. Some softness and chroma
+> fringing visible in the captures is from the capture chain itself, not
+> the scan-doubler output — on a VGA monitor connected directly to the
+> PCB the image is appreciably sharper.*
+
 CPC BASIC 1.1 prompt on an Awa 128K — the two build variants side by side:
 
 | NORMAL | NORMAL_SCANLINES |
