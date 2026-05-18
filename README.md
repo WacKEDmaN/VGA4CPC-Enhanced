@@ -131,12 +131,32 @@ directly from there if you don't want to build from source:
    - **closed / LOW** → 576p50 (CEA-861, ~50.08 Hz, scaled to ~800px wide)
    - **open / HIGH**  → 800×600p60 (DMT)
 
-The LED blinks at ~1 Hz when CPC frames are being captured. Solid ON
-means it's waiting for a VSYNC signal (no CPC connected or vsyncgen
-not wired through).
+The LED blinks at ~1 Hz when CPC frames are being captured. Solid (no
+flash) means it's waiting for a VSYNC signal — either no CPC connected
+or the CPC has been powered off.
 
-A test pattern (8 SMPTE-style bars) is shown until the CPC starts
-sending video.
+### "No signal" test pattern
+
+When no CPC signal is present, the firmware paints a "NO SIGNAL /
+VGA4CPC-ENHANCED" test card into the framebuffer so the monitor
+isn't left showing a frozen last-frame or a blank screen.
+
+- **At boot**, the card appears immediately. As soon as the CPC starts
+  sending video, capture overwrites the card line-by-line and live CPC
+  content takes over within one frame (~20 ms).
+- **When the CPC is powered off**, the firmware notices the loss of
+  HSYNC pulses within ~200 ms, then waits a further **3 seconds** of
+  total silence before painting the card. This guard against brief
+  hiccups (cable wobble, manual reset, etc.) avoids spurious flashes
+  to the "no signal" screen.
+- **When the CPC comes back**, live video resumes automatically inside
+  one frame — no key press, no reboot required.
+
+The card itself shows a "NO SIGNAL" banner, a castellation row, six
+full-bright colour bars (Y/C/G/M/R/B), a frequency burst pattern, a
+4-step greyscale ramp, a "VGA4CPC-ENHANCED" banner, and a yellow
+strip with a central red marker — drawn procedurally; no embedded
+image asset.
 
 ---
 

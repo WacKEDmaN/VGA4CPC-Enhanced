@@ -111,9 +111,22 @@ static inline void __not_in_flash_func(sanitize_line)(uint8_t *line8) {
     }
 }
 
+// "No signal" timeout — if no VSYNC has arrived in this many microseconds,
+// the capture loop repaints the test pattern into the framebuffer so the
+// monitor doesn't keep showing a frozen last-frame after the CPC powers off.
+#define NO_SIGNAL_TIMEOUT_US (3u * 1000u * 1000u)
+
+// Per-line HSYNC watchdog — a normal CPC line is ~64 µs, so 200 ms with no
+// HSYNC at all means the CPC has died mid-frame. Bail out of the per-line
+// loop so the outer VSYNC waits (which carry the no-signal repaint logic)
+// can take over.
+#define HSYNC_WATCHDOG_US    (200u * 1000u)
+
 void __not_in_flash_func(capture_run_forever)(void) {
     int line = 0;
     uint32_t frame_count = 0;
+    uint32_t last_vsync_us = time_us_32();
+    bool     test_pattern_shown = false;   // true while no-signal card is up
 
     // LED diagnostic:
     //   Solid ON     → waiting for first VSYNC (vsyncgen PIO not producing edges)
@@ -124,8 +137,30 @@ void __not_in_flash_func(capture_run_forever)(void) {
 
     while (1) {
         // VSYNC_GEN is HIGH during VSYNC blanking, LOW otherwise.
-        while (!gpio_get(PIN_VSYNC_GEN)) tight_loop_contents();
-        while (gpio_get(PIN_VSYNC_GEN))  tight_loop_contents();
+        // Throttled timeout check (every ~4096 polls) so a powered-off CPC
+        // triggers a test-pattern repaint after NO_SIGNAL_TIMEOUT_US.
+        uint32_t poll = 0;
+        while (!gpio_get(PIN_VSYNC_GEN)) {
+            if ((++poll & 0xFFFu) == 0u &&
+                !test_pattern_shown &&
+                (time_us_32() - last_vsync_us) > NO_SIGNAL_TIMEOUT_US) {
+                fb_paint_test_pattern();
+                test_pattern_shown = true;
+            }
+        }
+        poll = 0;
+        while (gpio_get(PIN_VSYNC_GEN)) {
+            if ((++poll & 0xFFFu) == 0u &&
+                !test_pattern_shown &&
+                (time_us_32() - last_vsync_us) > NO_SIGNAL_TIMEOUT_US) {
+                fb_paint_test_pattern();
+                test_pattern_shown = true;
+            }
+        }
+        last_vsync_us = time_us_32();
+        // VSYNC is alive again — clear the latch so the next no-signal
+        // period will repaint the card.
+        test_pattern_shown = false;
 
         frame_count++;
         gpio_put(PIN_LED, (frame_count / 25u) & 1u);
@@ -140,13 +175,24 @@ void __not_in_flash_func(capture_run_forever)(void) {
         uint8_t *prev_fb = NULL;
 
         while (!gpio_get(PIN_VSYNC_GEN) && line < FB_H) {
-            // HSYNC start (CSYNC falling)
+            // HSYNC start (CSYNC falling). Bail out if VSYNC arrives early
+            // OR if we've sat here so long the CPC clearly died mid-frame.
+            uint32_t hsync_poll = 0;
             while (gpio_get(PIN_CSYNC)) {
                 if (gpio_get(PIN_VSYNC_GEN)) goto frame_end;
+                if ((++hsync_poll & 0xFFFu) == 0u &&
+                    (time_us_32() - last_hsync_us) > HSYNC_WATCHDOG_US) {
+                    goto frame_end;
+                }
             }
-            // HSYNC end (CSYNC rising)
+            // HSYNC end (CSYNC rising). Same dual-exit logic.
+            hsync_poll = 0;
             while (!gpio_get(PIN_CSYNC)) {
                 if (gpio_get(PIN_VSYNC_GEN)) goto frame_end;
+                if ((++hsync_poll & 0xFFFu) == 0u &&
+                    (time_us_32() - last_hsync_us) > HSYNC_WATCHDOG_US) {
+                    goto frame_end;
+                }
             }
             last_hsync_us = time_us_32();
 

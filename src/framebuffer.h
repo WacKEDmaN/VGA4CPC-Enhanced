@@ -16,6 +16,17 @@ extern uint8_t framebuf[FB_H][FB_STRIDE];
 
 void fb_init(void);
 
+// Paint the "NO SIGNAL / PLEASE STAND BY" test card into the framebuffer.
+// Called once at boot (so the user has something to look at before the
+// CPC connects) and again by the capture loop whenever the CPC signal
+// has been absent for more than a few seconds.
+//
+// Layout (top to bottom, totalling FB_H = 288 rows):
+//   "NO SIGNAL" banner → castellation row → 6 colour bars → frequency
+//   burst (8 stripe-density groups) → 4-step greyscale ramp →
+//   "VGA4CPC-ENHANCED" banner → yellow strip with central red marker.
+void fb_paint_test_pattern(void);
+
 // Write pointer for line n (0..FB_H-1). Returns NULL if out of range.
 uint8_t       *fb_get_write_line(uint16_t n);
 
