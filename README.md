@@ -225,6 +225,14 @@ comparator and R-2R DAC path can deliver on the original Pico
 colour field (e.g. `CLS`) there are no artefacts at all — the issue is
 strictly transition-related.
 
+> *Note: the fringing is **substantially more pronounced through a
+> VGA-to-HDMI converter + USB capture dongle** (as in the screenshots
+> above) than on a VGA monitor connected directly to the PCB. Capture
+> chains apply chroma subsampling that smears colour transitions, so
+> what you see in the screenshots overstates the artefact. Live, on a
+> CRT or LCD VGA monitor, it's hard to spot from a normal viewing
+> distance.*
+
 ---
 
 ## Pico 2 roadmap
