@@ -1,0 +1,49 @@
+; vsyncgen.pio — extract VSYNC from composite CSYNC
+;
+; Verbatim from grzegorz-gr/vga4cpc reference firmware.
+; Drives `vsync_out_pin` HIGH during the VSYNC blanking interval,
+; LOW the rest of the time. The pin must be wired back externally
+; to the rgbin SM's vsync input (GPIO 7 on the VGA4CPC PCB).
+;
+; Algorithm: after each CSYNC pulse (falling → rising edge pair),
+; wait ≈ 15 µs and re-check CSYNC. If still HIGH it was an isolated
+; HSYNC; if LOW another pulse is already in progress, which only
+; happens during the VSYNC serration interval → flag VSYNC.
+;
+; SM clock = sys_clock / 8 = 15.625 MHz at sys_clock = 125 MHz.
+
+.program vsyncgen
+
+start:
+    set pins, 0         ; vsync output LOW (not in VSYNC blanking)
+
+.wrap_target
+    wait 0 pin 0        ; wait for next CSYNC pulse to start
+    wait 1 pin 0        ; wait for the pulse to end
+    set x, 29
+waitabit:
+    jmp x--, waitabit [7]
+    jmp pin, start      ; if CSYNC high now: was HSYNC → reset output
+
+    set pins, 1         ; otherwise: VSYNC detected → flag it HIGH
+.wrap
+
+
+% c-sdk {
+static inline void vsyncgen_program_init(PIO pio, uint sm, uint offset,
+                                          uint csync_in_pin, uint vsync_out_pin) {
+    pio_sm_config c = vsyncgen_program_get_default_config(offset);
+
+    sm_config_set_in_pins(&c, csync_in_pin);
+    sm_config_set_jmp_pin(&c, csync_in_pin);
+    sm_config_set_set_pins(&c, vsync_out_pin, 1);
+    sm_config_set_clkdiv(&c, 8.0f);
+    pio_gpio_init(pio, csync_in_pin);
+    pio_gpio_init(pio, vsync_out_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, csync_in_pin, 1, false);
+    pio_sm_set_consecutive_pindirs(pio, sm, vsync_out_pin, 1, true);
+    sm_config_set_in_shift(&c, true, false, 1);
+    sm_config_set_out_shift(&c, true, false, 1);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

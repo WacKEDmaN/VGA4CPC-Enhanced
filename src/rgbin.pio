@@ -1,0 +1,54 @@
+; rgbin.pio — CPC RGB capture, one push per pixel.
+;
+; Each push transfers one 6-bit sample as a 32-bit word (low byte).
+; DMA uses DMA_SIZE_8 to extract just the low byte.
+;
+; SM clock = sys_clock (125 MHz). 8 cycles per sample → 15.625 MHz
+; sample rate (reference targets 16 MHz at 128 MHz sys_clock).
+
+.program rgbin
+
+    pull block          ; CPU pushes (CPC_ACTIVE_W - 1) once at init
+    mov y, osr          ; per-line sample-count - 1
+
+    wait 1 gpio 10      ; sync to the next frame (VSYNC active)
+
+.wrap_target
+    wait 0 gpio 10      ; wait until VSYNC is over → active video begins
+    wait 0 gpio 6       ; wait for HSYNC start (CSYNC falling)
+
+    ; ~3.5 µs wait before re-checking CSYNC (smooth-scroll tolerance)
+    set x, 12
+waitloop:
+    jmp x--, waitloop [31]
+    nop [21]
+
+    wait 1 gpio 6       ; wait for HSYNC end (CSYNC rising)
+
+    ; Back porch: ~8 µs
+    set x, 31
+porch:
+    jmp x-- porch [31]
+    nop
+
+    ; 800 pixels — 8 SM cycles each (in + push[5] + jmp = 1+6+1)
+    mov x, y
+readpixel:
+    in pins, 6
+    push [5]
+    jmp x-- readpixel
+.wrap
+
+
+% c-sdk {
+static inline void rgbin_program_init(PIO pio, uint sm, uint offset, uint first_rgb_pin) {
+    pio_sm_config c = rgbin_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, first_rgb_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, first_rgb_pin, 7, false);
+    for (uint i = 0; i < 7; ++i) {
+        pio_gpio_init(pio, first_rgb_pin + i);
+    }
+    sm_config_set_in_shift(&c, false, false, 6);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
