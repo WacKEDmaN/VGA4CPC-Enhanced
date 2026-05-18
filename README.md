@@ -54,20 +54,21 @@ preserves:
 |-------|-------------------------------------------|
 | 0–5   | CPC RGB input (B_LO, B_HI, G_LO, G_HI, R_LO, R_HI) |
 | 6     | CSYNC input (active low)                  |
-| 10    | vsyncgen output (must be wired to GPIO 7 — see below) |
+| 10    | vsyncgen output (PCB internally routes this to GPIO 7) |
 | 12    | VGA HSYNC                                 |
 | 13    | VGA VSYNC                                 |
 | 14–19 | 6-bit R-2R DAC (R/G/B × 2 bits each)      |
 | 25    | LED                                       |
 | 26    | 50/60 Hz mode switch (closed/LOW = 50 Hz) |
 
-> **⚠ Required PCB jumper: GPIO 10 → GPIO 7.**
+> **Note: GPIO 10 → GPIO 7 is hardwired on the PCB.**
 > The capture path generates a clean VSYNC signal in software (PIO1
 > SM0 derives it from the noisy composite CSYNC) and drives it out on
 > GPIO 10. The rgbin SM then reads that VSYNC back via GPIO 7. The
-> VGA4CPC PCB exposes both pins — they need to be jumpered together
-> for capture to work at all. Without this jumper the LED will sit
-> solid-on (waiting for VSYNC forever) and no picture appears.
+> VGA4CPC PCB already connects these two pins internally — **nothing
+> for the user to wire up**. This is just a heads-up if you're
+> repurposing the firmware on a different board, where you'd need to
+> create that connection yourself.
 
 ---
 
