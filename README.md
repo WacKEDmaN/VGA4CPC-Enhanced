@@ -49,11 +49,13 @@ Click through to YouTube for live captures of the firmware running:
 |:---:|:---:|
 | [![Normal mode live, with the "no signal" card switching in when the CPC powers off](https://img.youtube.com/vi/u6UePIkd_Jg/hqdefault.jpg)](https://www.youtube.com/watch?v=u6UePIkd_Jg) | [![Scanlines mode live, showing the CRT-style dark-gap scanlines](https://img.youtube.com/vi/mkgNcqdlhVY/hqdefault.jpg)](https://www.youtube.com/watch?v=mkgNcqdlhVY) |
 
-A longer, more demanding test — [**SymbOS**](https://www.symbos.de/) running
+A longer, more demanding test — [**SymbOS**](https://www.symbos.org/) running
 jitter-free, with the BOOTSEL scanlines toggle shown switching modes on
 the fly:
 
-[![SymbOS on CPC through the scan-doubler, with the BOOTSEL scanlines toggle](https://img.youtube.com/vi/wtBRFJdr2-E/hqdefault.jpg)](https://www.youtube.com/watch?v=wtBRFJdr2-E)
+| SymbOS demo + live scanlines toggle |
+|:---:|
+| [![SymbOS on CPC through the scan-doubler, with the BOOTSEL scanlines toggle](https://img.youtube.com/vi/wtBRFJdr2-E/hqdefault.jpg)](https://www.youtube.com/watch?v=wtBRFJdr2-E) |
 
 ---
 
