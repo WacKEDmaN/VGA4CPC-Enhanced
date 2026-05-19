@@ -404,6 +404,82 @@ the firmware on a different display before assuming a firmware bug.
 
 ---
 
+## Optional hardware mods
+
+The Known limitations above are real but addressable with small
+hardware additions if they're bothering you. None of these are
+required — the firmware works as-shipped on a stock vga4cpc PCB —
+but they're easy to fit and give real improvements.
+
+### Bulk 3.3 V decoupling — mitigates DAC rail droop
+
+If you notice the red intensity subtly modulating when the border
+flashes between bright blue and bright red (see *Brightness coupling
+between colour channels* in Known limitations), it's because the Pico's
+3.3 V rail droops a few mV when the DAC pins suddenly source more
+current. A single bulk capacitor on the rail soaks up most of that
+droop without touching the firmware.
+
+| Component | Value | Where it goes |
+|-----------|-------|---------------|
+| Electrolytic | **220 µF or 470 µF**, 6.3 V+ | Between Pico pin **36 (3V3)** and any GND pin (38, 23, 28, 18, 13, 8, 3), as close to the Pico as possible. |
+| Ceramic (optional, in parallel) | 1–10 µF X7R | Same two pads. Catches the faster transients the bulk cap is too slow for. |
+
+A ceramic 0.1 µF is *not* needed here — the Pico already has internal
+equivalents at the chip.
+
+**Sizing logic:** worst case is ~50 mA extra current draw lasting ~50 µs
+(a whole CPC line of bright-blue border). For a ≤10 mV droop budget,
+C ≥ I × Δt / ΔV = 0.05 × 50e-6 / 0.01 = **250 µF**. So 220 µF is just
+inside the zone; 470 µF is comfortable headroom.
+
+**What this fixes:** line-rate droop where the rail can't keep up with
+border-vs-background load changes. The visible effect should drop from
+"obvious" to "imperceptible without specifically looking for it".
+
+**What this doesn't fix:** the residual cross-channel coupling at very
+high speeds (the cap is downstream of the Pico's bond wires and PCB
+traces, so VDDIO still sees *some* droop). For complete elimination,
+see the 74HCT245 buffer mod below.
+
+### 74HCT245 / 74HC245 buffer — full DAC decoupling
+
+The proper fix for the cross-channel coupling is to put a logic
+buffer between the Pico's GPIO 14–19 outputs and the R-2R DAC inputs.
+The buffer chip has its own supply pins and presents a tiny gate
+capacitance to the Pico, so the DAC's load no longer pulls on the
+Pico's 3.3 V rail at all.
+
+| Component | Spec | Notes |
+|-----------|------|-------|
+| 74HCT245 (or 74HC245) | Octal bus transceiver, fixed direction | "T" variant has TTL-compatible inputs which are slightly better at 3.3 V drive |
+| Power for the buffer | 5 V from Pico's VBUS (pin 40), or a clean 3.3 V from a separate LDO | Buffer outputs drive the R-2R; 5 V drive gives a wider DAC range |
+| Decoupling | 0.1 µF ceramic at the buffer's VCC pin | Standard practice |
+
+Wire-up:
+- `DIR` = VCC (always Pico → DAC)
+- `OE` = GND (always enabled)
+- A1..A6 = Pico GPIO 14..19
+- B1..B6 = R-2R DAC inputs
+- B7, B8 unused (tie to GND or leave floating per datasheet)
+
+This is a PCB-level mod — not just an add-on cap — so it's more
+involved. But it eliminates the cross-channel coupling completely,
+and (as a bonus) lets you drive the R-2R from a 5 V swing, which
+extends the DAC's dynamic range and gives slightly cleaner colour
+separation.
+
+### Why no fix for the vertical gradient issue?
+
+Because it's almost certainly the user's monitor, not the firmware
+or the PCB. Test on another display before assuming a hardware
+problem. If it persists across multiple monitors, the suspect is the
+VGA cable (long unshielded cables can pick up power-supply ripple)
+or the monitor's input stage; neither is something this project can
+help with directly.
+
+---
+
 ## Pico 2 roadmap
 
 The PCB is pin-compatible with the **Raspberry Pi Pico 2 (RP2350)**,
