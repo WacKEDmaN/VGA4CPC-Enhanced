@@ -406,38 +406,11 @@ the firmware on a different display before assuming a firmware bug.
 
 ## Optional hardware mods
 
-The Known limitations above are real but addressable with small
-hardware additions if they're bothering you. None of these are
-required — the firmware works as-shipped on a stock vga4cpc PCB —
-but the buffer mod below is the proper fix for the DAC rail droop /
-cross-channel coupling issue.
-
-### Don't bother with a bulk decoupling cap on the 3.3 V rail
-
-An earlier version of this README suggested adding a 220–470 µF
-electrolytic between Pico pin 36 (3V3) and GND to soak up DAC rail
-droop. **It doesn't work, and worse, it makes things worse.** Empirical
-test: adding a 470 µF / 35 V cap caused moving bands of noise across
-the picture and *no* improvement to the red-intensity-modulation issue.
-
-Two reasons the cap doesn't help:
-
-- **It destabilises the regulator.** The Pico uses an **RT6150 buck-boost
-  SMPS**, not an LDO. Switching regulators have a control loop tuned
-  for a specific output-cap range (~22 µF for the RT6150); a 470 µF
-  bulk cap is far outside that range and pushes the loop into low-
-  frequency oscillation. The oscillation isn't phase-locked to the
-  CPC frame rate, so it shows as slow rolling bands on the picture.
-- **The droop probably isn't on the 3.3 V rail at all.** The colour-
-  coupling effect almost certainly comes from **ground bounce** and
-  **I/O pad supply droop inside the RP2040's package** when multiple
-  GPIOs switch simultaneously — no amount of external capacitance
-  can fix either, because both happen on the wrong side of the chip's
-  bond wires.
-
-**Bottom line:** don't add bulk caps to the Pico rail. The only mod
-that actually helps the colour coupling is the buffer chip below,
-which moves the DAC's current load off the Pico's package entirely.
+The Known limitations above are real but addressable with a small
+hardware addition if they're bothering you. Not required — the
+firmware works as-shipped on a stock vga4cpc PCB — but the buffer
+mod below is the proper fix for the DAC rail droop / cross-channel
+coupling issue.
 
 ### 74HCT245 / 74HC245 buffer — full DAC decoupling
 
