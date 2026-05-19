@@ -105,16 +105,34 @@ single prebuilt firmware image is committed to [`dist/`](dist/):
    - **closed / LOW** → 576p50 (CEA-861, ~50.08 Hz, scaled to ~800px wide)
    - **open / HIGH**  → 800×600p60 (DMT)
 
-### Scanlines toggle (BOOTSEL button)
+### Scanlines (BOOTSEL button)
 
 Once the firmware is running, **press the BOOTSEL button** on the Pico
-to toggle the CRT-style scanlines effect on or off. Each press flips
-the mode; button must be released before the next press counts.
+to step through four scanline density levels:
 
-The selected mode is **persisted to the last 4 KB sector of the Pico's
-flash**, so it survives power cycles — set your preference once and
-the firmware will boot into the same mode next time. First-ever boot
-(blank persistence sector) defaults to **scanlines off**.
+| Press # | Level         | Effect                                          |
+|:-------:|:--------------|:------------------------------------------------|
+| 0 (boot) | Off          | No scanlines — smooth line-doubled output       |
+| 1       | Light (~17%)  | Black line every 6 output rows — very subtle    |
+| 2       | Medium (25%)  | Black line every 4 output rows — moderate       |
+| 3       | Heavy (50%)   | Black line every 2 output rows — classic CRT    |
+| 4       | (back to Off) | Cycle restarts                                  |
+
+Each press advances by one level; button must be released before the
+next press counts.
+
+The selected level is **persisted to the last 4 KB sector of the
+Pico's flash**, so it survives power cycles — set your preference
+once and the firmware boots into the same level next time. First-ever
+boot (blank persistence sector) defaults to **Off**.
+
+Note: this firmware can't do true CRT-style content-aware dimming
+(where every other line shows the same picture but darker) — that
+needs a second framebuffer's worth of RAM, more than the RP2040
+has spare. The 4 levels above all use real black gap lines and vary
+only their *density*, which still gives a clear gradient of the
+"scanlined" look without the visual artefacts a flat-grey-overlay
+approach would produce.
 
 The on-board LED (GPIO 25, PWM-dimmed to ~half brightness) indicates
 sync state:
@@ -264,20 +282,24 @@ area. Monitors still detect a standard 720×576p50 signal.
 
 ### Display modes
 
-A single firmware UF2 ships both display modes; the user toggles between
-them at runtime via the BOOTSEL button (see *Flash & use* above):
+A single firmware UF2 ships four scanline density levels; the user
+cycles between them at runtime via the BOOTSEL button (see *Flash &
+use* above):
 
-| Mode             | Description                                   |
-|------------------|-----------------------------------------------|
-| Normal (default) | Plain colour scan-doubled output              |
-| Scanlines        | CRT-style dark gap between every pair of lines|
+| Level   | Black-line spacing | Description                            |
+|---------|:------------------:|----------------------------------------|
+| Off     | none               | Plain colour scan-doubled output       |
+| Light   | every 6 rows       | Very subtle scanline pattern           |
+| Medium  | every 4 rows       | Moderate scanline pattern              |
+| Heavy   | every 2 rows       | Classic 50%-density CRT scanlines      |
 
-The scanlines effect is implemented by flipping the odd-indexed entries
-of the output-DMA's source-pointer ring between the framebuffer rows
-and a single all-black row. Toggling has no measurable effect on
-capture / output performance — each `line_src[]` slot is a single
-32-bit pointer, written atomically from the capture loop's per-frame
-BOOTSEL check.
+The scanlines effect is implemented by selectively flipping odd-indexed
+entries of the output-DMA's source-pointer ring between the framebuffer
+rows and a single all-black row. Density changes only affect *which*
+odd rows get pointed at the black row; every other index keeps line-
+doubling normally. Each `line_src[]` slot is a single 32-bit pointer,
+written atomically from the capture loop's per-frame BOOTSEL check, so
+the swap has no measurable effect on capture / output performance.
 
 Earlier development versions experimented with monochrome / amber /
 green "P1/P3 phosphor" effects, but they were abandoned because the

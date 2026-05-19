@@ -20,14 +20,17 @@ Repo: <https://github.com/WacKEDmaN/VGA4CPC-Enhanced> — public domain
 ## Current status
 
 **Pico 1 (RP2040) firmware is feature-complete and shipped.** A single
-`dist/vga4cpc_enhanced.uf2` contains both normal and scanlines display
-modes, runtime-toggleable via the Pico's BOOTSEL button (handled by a
-RAM-resident QSPI-CS-read helper in `capture.c`, polled once per CPC
-frame). The chosen mode is persisted in the last 4 KB flash sector
+`dist/vga4cpc_enhanced.uf2` contains four scanline density levels
+(off / light / medium / heavy = black row every 6 / 4 / 2 output rows),
+runtime-cycled via the Pico's BOOTSEL button (handled by a RAM-resident
+QSPI-CS-read helper in `capture.c`, polled once per CPC frame).
+The chosen level (0..3) is persisted in the last 4 KB flash sector
 with a 32-bit magic header (PERSIST_MAGIC = 0xCAFE4CB7); see
 `persist_load_scanlines()` / `persist_save_scanlines()` in `capture.c`.
-Side-by-side comparison against upstream confirmed this build shows
-visibly *less* edge fringing.
+True per-pixel content-aware CRT dimming would need a second
+framebuffer (230 KB) which doesn't fit on RP2040 — only density
+variation is implemented here. Side-by-side comparison against
+upstream confirmed this build shows visibly *less* edge fringing.
 
 The remaining low-grade artefacts are analog (CPC gate-array
 transitions, comparator settling, unbuffered R-2R DAC into VGA cable).

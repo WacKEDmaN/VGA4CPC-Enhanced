@@ -68,12 +68,12 @@ static bool __no_inline_not_in_flash_func(get_bootsel_button)(void) {
 // Persistent settings (last flash sector)
 //
 // One 4 KB sector at the very end of flash is reserved for user
-// settings — currently just the scanlines on/off flag. Layout:
+// settings — currently just the scanlines density level. Layout:
 //
 //   offset 0..3   magic (PERSIST_MAGIC) — distinguishes a valid record
 //                 from blank flash (0xFF…FF) or stale data from a
 //                 previous firmware version.
-//   offset 4      scanlines flag (0x00 = off, 0x01 = on)
+//   offset 4      scanlines level (0..3; out-of-range -> 0)
 //   offset 5..    reserved
 //
 // flash_range_erase() / flash_range_program() are themselves RAM-
@@ -86,20 +86,22 @@ static bool __no_inline_not_in_flash_func(get_bootsel_button)(void) {
 #define PERSIST_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 #define PERSIST_FLASH_ADDR   ((const uint8_t *)(XIP_BASE + PERSIST_FLASH_OFFSET))
 #define PERSIST_MAGIC        0xCAFE4CB7u
+#define SCANLINES_LEVEL_MAX  3
 
-static bool persist_load_scanlines(void) {
+static int persist_load_scanlines(void) {
     uint32_t magic;
     memcpy(&magic, PERSIST_FLASH_ADDR, sizeof(magic));
-    if (magic != PERSIST_MAGIC) return false;   // blank / corrupt → default off
-    return PERSIST_FLASH_ADDR[4] == 0x01u;
+    if (magic != PERSIST_MAGIC) return 0;       // blank / corrupt → default off
+    uint8_t v = PERSIST_FLASH_ADDR[4];
+    return (v <= SCANLINES_LEVEL_MAX) ? (int)v : 0;
 }
 
-static void persist_save_scanlines(bool on) {
+static void persist_save_scanlines(int level) {
     uint8_t buf[FLASH_PAGE_SIZE];
     memset(buf, 0xFF, sizeof(buf));             // keep unused bytes erased
     uint32_t magic = PERSIST_MAGIC;
     memcpy(buf, &magic, sizeof(magic));
-    buf[4] = on ? 0x01u : 0x00u;
+    buf[4] = (uint8_t)(level & 0xFFu);
 
     uint32_t flags = save_and_disable_interrupts();
     flash_range_erase(PERSIST_FLASH_OFFSET, FLASH_SECTOR_SIZE);
@@ -211,14 +213,16 @@ void __not_in_flash_func(capture_run_forever)(void) {
     uint32_t last_vsync_us = time_us_32();
     bool     test_pattern_shown = false;   // true while no-signal card is up
 
-    // BOOTSEL-driven scanlines toggle. Initial state is loaded from the
-    // persistence sector in flash (blank/corrupt → defaults to off).
-    // Edge-detected: one press = one toggle; button must be released
-    // before next press re-arms the toggle. Checked once per CPC frame
-    // (~20 ms cadence — gives natural debouncing).
-    bool scanlines_on   = persist_load_scanlines();
-    bool bootsel_armed  = true;
-    vga_output_set_scanlines(scanlines_on);
+    // BOOTSEL-driven scanlines level. 4 states cycled by successive
+    // presses: 0=off → 1=light → 2=medium → 3=heavy → 0=off → ...
+    // Initial state is loaded from the persistence sector in flash
+    // (blank/corrupt → defaults to 0).
+    // Edge-detected: one press = one step; button must be released
+    // before next press re-arms. Checked once per CPC frame (~20 ms
+    // cadence — gives natural debouncing).
+    int  scanlines_level = persist_load_scanlines();
+    bool bootsel_armed   = true;
+    vga_output_set_scanlines(scanlines_level);
 
     // LED diagnostic (PWM-dimmed to ~half brightness so it's not blindingly
     // bright in a dark room):
@@ -275,13 +279,14 @@ void __not_in_flash_func(capture_run_forever)(void) {
         // Sync is good → LED solid at half brightness.
         pwm_set_chan_level(led_slice, led_chan, LED_HALF);
 
-        // Once per CPC frame, check BOOTSEL. Press toggles scanlines
-        // and persists the new state to flash so it survives a reset.
+        // Once per CPC frame, check BOOTSEL. Each press steps to the
+        // next density level (0→1→2→3→0…) and persists the new state
+        // to flash so it survives a reset.
         bool bs = get_bootsel_button();
         if (bs && bootsel_armed) {
-            scanlines_on = !scanlines_on;
-            vga_output_set_scanlines(scanlines_on);
-            persist_save_scanlines(scanlines_on);   // ~50 ms blocking write
+            scanlines_level = (scanlines_level + 1) % (SCANLINES_LEVEL_MAX + 1);
+            vga_output_set_scanlines(scanlines_level);
+            persist_save_scanlines(scanlines_level);   // ~50 ms blocking write
             bootsel_armed = false;          // wait for release
         } else if (!bs) {
             bootsel_armed = true;
