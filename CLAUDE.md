@@ -20,13 +20,24 @@ Repo: <https://github.com/WacKEDmaN/VGA4CPC-Enhanced> — public domain
 ## Current status
 
 **Pico 1 (RP2040) firmware is feature-complete and shipped.** A single
-`dist/vga4cpc_enhanced.uf2` contains four scanline density levels
-(off / light / medium / heavy = black row every 6 / 4 / 2 output rows),
-runtime-cycled via the Pico's BOOTSEL button (handled by a RAM-resident
-QSPI-CS-read helper in `capture.c`, polled once per CPC frame).
-The chosen level (0..3) is persisted in the last 4 KB flash sector
-with a 32-bit magic header (PERSIST_MAGIC = 0xCAFE4CB7); see
-`persist_load_scanlines()` / `persist_save_scanlines()` in `capture.c`.
+`dist/vga4cpc_enhanced.uf2` exposes two persistent runtime settings via
+the Pico's BOOTSEL button (handled by a RAM-resident QSPI-CS-read
+helper in `capture.c`, polled both from the frame-end path and a
+sub-throttled point in the no-signal wait):
+
+- **Short press** (<1.5 s release) → cycle scanlines density 0..3 (off
+  / light / medium / heavy = black row every 6 / 4 / 2 output rows).
+- **Long press** (≥1.5 s release) → cycle right-edge trim 0..3
+  (0/32/64/96 px). Overwrites the rightmost N captured pixels of each
+  line with the value of pixel 0 (the assumed border colour), hiding
+  post-active garbage from CRTC-trickery games like Prehistorik 2.
+
+Both levels (0..3 each) are persisted in the last 4 KB flash sector
+at byte offsets 4 (scanlines) and 5 (trim), behind a 32-bit magic
+header (PERSIST_MAGIC = 0xCAFE4CB7). Old format records (with byte 5
+blank = 0xFF) cleanly upgrade — out-of-range trim defaults to 0. See
+`persist_load()`, `persist_save()`, and `poll_bootsel()` in `capture.c`.
+
 True per-pixel content-aware CRT dimming would need a second
 framebuffer (230 KB) which doesn't fit on RP2040 — only density
 variation is implemented here. Side-by-side comparison against

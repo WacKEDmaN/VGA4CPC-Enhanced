@@ -87,26 +87,78 @@ static bool __no_inline_not_in_flash_func(get_bootsel_button)(void) {
 #define PERSIST_FLASH_ADDR   ((const uint8_t *)(XIP_BASE + PERSIST_FLASH_OFFSET))
 #define PERSIST_MAGIC        0xCAFE4CB7u
 #define SCANLINES_LEVEL_MAX  3
+#define TRIM_LEVEL_MAX       3
 
-static int persist_load_scanlines(void) {
+// Right-edge trim in pixels for each trim level. Trims overwrite the
+// rightmost N captured pixels of each line with the value of the
+// leftmost pixel — effectively clamping the right border to the same
+// colour as the left border, hiding post-active garbage from games
+// like Prehistorik 2 that output bytes the monitor's overscan would
+// normally have hidden.
+static const int TRIM_PIXELS[4] = { 0, 32, 64, 96 };
+
+// Module-level state shared between BOOTSEL handler and sanitize_line.
+static int      s_scanlines_level = 0;
+static int      s_trim_level      = 0;
+static volatile int s_trim_pixels = 0;   // cached TRIM_PIXELS[s_trim_level]
+
+static void persist_load(void) {
     uint32_t magic;
     memcpy(&magic, PERSIST_FLASH_ADDR, sizeof(magic));
-    if (magic != PERSIST_MAGIC) return 0;       // blank / corrupt → default off
-    uint8_t v = PERSIST_FLASH_ADDR[4];
-    return (v <= SCANLINES_LEVEL_MAX) ? (int)v : 0;
+    if (magic != PERSIST_MAGIC) {
+        s_scanlines_level = 0;
+        s_trim_level      = 0;
+    } else {
+        uint8_t sl = PERSIST_FLASH_ADDR[4];
+        uint8_t tr = PERSIST_FLASH_ADDR[5];
+        s_scanlines_level = (sl <= SCANLINES_LEVEL_MAX) ? (int)sl : 0;
+        s_trim_level      = (tr <= TRIM_LEVEL_MAX)      ? (int)tr : 0;
+    }
+    s_trim_pixels = TRIM_PIXELS[s_trim_level];
 }
 
-static void persist_save_scanlines(int level) {
+static void persist_save(void) {
     uint8_t buf[FLASH_PAGE_SIZE];
     memset(buf, 0xFF, sizeof(buf));             // keep unused bytes erased
     uint32_t magic = PERSIST_MAGIC;
     memcpy(buf, &magic, sizeof(magic));
-    buf[4] = (uint8_t)(level & 0xFFu);
+    buf[4] = (uint8_t)(s_scanlines_level & 0xFFu);
+    buf[5] = (uint8_t)(s_trim_level      & 0xFFu);
 
     uint32_t flags = save_and_disable_interrupts();
     flash_range_erase(PERSIST_FLASH_OFFSET, FLASH_SECTOR_SIZE);
     flash_range_program(PERSIST_FLASH_OFFSET, buf, FLASH_PAGE_SIZE);
     restore_interrupts(flags);
+}
+
+// =====================================================================
+// BOOTSEL press handler — short press cycles scanlines, long press
+// cycles right-edge trim. Action fires on release, classified by hold
+// duration. Long-press threshold = 1.5 s.
+// =====================================================================
+#define LONG_PRESS_US 1500000u
+
+static bool     s_bootsel_was_pressed   = false;
+static uint32_t s_bootsel_press_start_us = 0;
+
+static void poll_bootsel(void) {
+    bool now = get_bootsel_button();
+    if (now && !s_bootsel_was_pressed) {
+        // Edge: just pressed — remember when.
+        s_bootsel_press_start_us = time_us_32();
+    } else if (!now && s_bootsel_was_pressed) {
+        // Edge: just released — classify and act.
+        uint32_t held = time_us_32() - s_bootsel_press_start_us;
+        if (held > LONG_PRESS_US) {
+            s_trim_level = (s_trim_level + 1) % (TRIM_LEVEL_MAX + 1);
+            s_trim_pixels = TRIM_PIXELS[s_trim_level];
+        } else {
+            s_scanlines_level = (s_scanlines_level + 1) % (SCANLINES_LEVEL_MAX + 1);
+            vga_output_set_scanlines(s_scanlines_level);
+        }
+        persist_save();
+    }
+    s_bootsel_was_pressed = now;
 }
 
 // =====================================================================
@@ -190,10 +242,23 @@ bool capture_signal_present(void) {
 // we touch it). Costs ~6 µs per line; fits in the post-DMA idle window.
 // ---------------------------------------------------------------------
 static inline void __not_in_flash_func(sanitize_line)(uint8_t *line8) {
+    // Level-2 sanitiser: promote any spurious `10` thermometer codes
+    // (an impossible CPC voltage level) up to `11`. 32-bit word pass.
     uint32_t *w = (uint32_t *)line8;
     for (int i = 0; i < FB_W / 4; i++) {
         uint32_t v = w[i];
         w[i] = v | ((v >> 1) & 0x15151515u);
+    }
+    // Right-edge trim: overwrite the rightmost s_trim_pixels bytes with
+    // the value of the leftmost pixel (assumed to be the border colour).
+    // Hides post-active garbage from games whose CRTC programming
+    // outputs bytes past the intended visible area.
+    int trim = s_trim_pixels;
+    if (trim > 0) {
+        uint8_t border = line8[0];
+        int start = FB_W - trim;
+        if (start < 0) start = 0;
+        for (int x = start; x < FB_W; x++) line8[x] = border;
     }
 }
 
@@ -213,16 +278,12 @@ void __not_in_flash_func(capture_run_forever)(void) {
     uint32_t last_vsync_us = time_us_32();
     bool     test_pattern_shown = false;   // true while no-signal card is up
 
-    // BOOTSEL-driven scanlines level. 4 states cycled by successive
-    // presses: 0=off → 1=light → 2=medium → 3=heavy → 0=off → ...
-    // Initial state is loaded from the persistence sector in flash
-    // (blank/corrupt → defaults to 0).
-    // Edge-detected: one press = one step; button must be released
-    // before next press re-arms. Checked once per CPC frame (~20 ms
-    // cadence — gives natural debouncing).
-    int  scanlines_level = persist_load_scanlines();
-    bool bootsel_armed   = true;
-    vga_output_set_scanlines(scanlines_level);
+    // Load persisted scanline + trim levels from flash. BOOTSEL presses
+    // are classified by hold duration:
+    //   short release (<1.5 s) → cycle scanlines 0..3
+    //   long  release (≥1.5 s) → cycle right-edge trim 0..3 (0/32/64/96 px)
+    persist_load();
+    vga_output_set_scanlines(s_scanlines_level);
 
     // LED diagnostic (PWM-dimmed to ~half brightness so it's not blindingly
     // bright in a dark room):
@@ -255,6 +316,11 @@ void __not_in_flash_func(capture_run_forever)(void) {
                     fb_paint_test_pattern();
                     test_pattern_shown = true;
                 }
+                // BOOTSEL is checked here too so the user can adjust
+                // scanlines/trim while staring at the test card.
+                // Sub-throttled to ~every 16 outer ticks (~ms) to keep
+                // the QSPI-read cost negligible.
+                if ((poll & 0xFFFFu) == 0u) poll_bootsel();
             }
         }
         poll = 0;
@@ -269,6 +335,11 @@ void __not_in_flash_func(capture_run_forever)(void) {
                     fb_paint_test_pattern();
                     test_pattern_shown = true;
                 }
+                // BOOTSEL is checked here too so the user can adjust
+                // scanlines/trim while staring at the test card.
+                // Sub-throttled to ~every 16 outer ticks (~ms) to keep
+                // the QSPI-read cost negligible.
+                if ((poll & 0xFFFFu) == 0u) poll_bootsel();
             }
         }
         last_vsync_us = time_us_32();
@@ -279,18 +350,9 @@ void __not_in_flash_func(capture_run_forever)(void) {
         // Sync is good → LED solid at half brightness.
         pwm_set_chan_level(led_slice, led_chan, LED_HALF);
 
-        // Once per CPC frame, check BOOTSEL. Each press steps to the
-        // next density level (0→1→2→3→0…) and persists the new state
-        // to flash so it survives a reset.
-        bool bs = get_bootsel_button();
-        if (bs && bootsel_armed) {
-            scanlines_level = (scanlines_level + 1) % (SCANLINES_LEVEL_MAX + 1);
-            vga_output_set_scanlines(scanlines_level);
-            persist_save_scanlines(scanlines_level);   // ~50 ms blocking write
-            bootsel_armed = false;          // wait for release
-        } else if (!bs) {
-            bootsel_armed = true;
-        }
+        // BOOTSEL check — short release cycles scanlines, long release
+        // (≥1.5 s hold) cycles the right-edge trim. Both persist to flash.
+        poll_bootsel();
 
         // Black-fill the tail of the previous frame.
         for (int y = line; y < FB_H; y++) {

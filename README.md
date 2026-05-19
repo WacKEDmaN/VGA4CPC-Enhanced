@@ -105,10 +105,14 @@ single prebuilt firmware image is committed to [`dist/`](dist/):
    - **closed / LOW** → 576p50 (CEA-861, ~50.08 Hz, scaled to ~800px wide)
    - **open / HIGH**  → 800×600p60 (DMT)
 
-### Scanlines (BOOTSEL button)
+### BOOTSEL button — runtime settings
 
-Once the firmware is running, **press the BOOTSEL button** on the Pico
-to step through four scanline density levels:
+The BOOTSEL button on the Pico drives two settings, distinguished by
+hold duration:
+
+#### Short press (< 1.5 s) — scanlines density
+
+Each quick tap steps through four scanline density levels:
 
 | Press # | Level         | Effect                                          |
 |:-------:|:--------------|:------------------------------------------------|
@@ -118,14 +122,6 @@ to step through four scanline density levels:
 | 3       | Heavy (50%)   | Black line every 2 output rows — classic CRT    |
 | 4       | (back to Off) | Cycle restarts                                  |
 
-Each press advances by one level; button must be released before the
-next press counts.
-
-The selected level is **persisted to the last 4 KB sector of the
-Pico's flash**, so it survives power cycles — set your preference
-once and the firmware boots into the same level next time. First-ever
-boot (blank persistence sector) defaults to **Off**.
-
 Note: this firmware can't do true CRT-style content-aware dimming
 (where every other line shows the same picture but darker) — that
 needs a second framebuffer's worth of RAM, more than the RP2040
@@ -133,6 +129,38 @@ has spare. The 4 levels above all use real black gap lines and vary
 only their *density*, which still gives a clear gradient of the
 "scanlined" look without the visual artefacts a flat-grey-overlay
 approach would produce.
+
+#### Long press (≥ 1.5 s) — right-edge trim
+
+Some CPC games (e.g. Prehistorik 2) use CRTC timing tricks that emit
+pixel data past their intended visible area — bytes a real CPC's
+monitor would have hidden via overscan. Our scan-doubler captures
+them verbatim, which can show up as garbage / coloured lines on the
+right edge of the screen.
+
+The right-edge trim overwrites the rightmost N captured pixels of
+each line with the value of the leftmost pixel (assumed to be the
+border colour) — hiding that garbage while preserving the border.
+
+Hold BOOTSEL for **at least 1.5 seconds** and then release to cycle
+through four trim levels:
+
+| Trim level | Pixels trimmed | When to use                              |
+|:----------:|:--------------:|:-----------------------------------------|
+| 0 (default) | 0  (off)      | No trim — full 800-pixel capture shown   |
+| 1          | 32             | Mild garbage on the right edge           |
+| 2          | 64             | More noticeable garbage (most games)     |
+| 3          | 96             | Heavy CRTC-trickery games (Prehistorik 2) |
+
+The on-screen effect: the rightmost N pixels become a uniform border
+colour. Step up one level at a time until the garbage disappears.
+
+#### Persistence
+
+Both settings are **persisted to the last 4 KB sector of the Pico's
+flash**, so they survive power cycles — set your preferences once and
+the firmware boots into the same state next time. First-ever boot
+(blank persistence sector) defaults to Off / 0.
 
 The on-board LED (GPIO 25, PWM-dimmed to ~half brightness) indicates
 sync state:
@@ -341,6 +369,38 @@ strictly transition-related.
 > what you see in the screenshots overstates the artefact. Live, on a
 > CRT or LCD VGA monitor, it's hard to spot from a normal viewing
 > distance.*
+
+### Brightness coupling between colour channels (DAC rail droop)
+
+If you display a solid red background with a border that flashes between
+bright blue and bright red, you may notice the red background subtly
+*pulses* in intensity as the border colour changes. Switching the blue
+channel on at the border momentarily increases the DAC's current draw
+through the R-2R network; the Pico's 3.3 V rail droops a few millivolts
+under the extra load, which pulls the red voltage down at the same
+time. When the border flips back to red, the load drops, the rail
+recovers, and red brightens back up.
+
+This is a **hardware issue with the unbuffered DAC path**, not the
+firmware — every pixel byte is output identically; there's no way for
+firmware to cancel a power-supply droop. The clean fix is a logic
+buffer (e.g. 74HCT245) between the Pico's GPIOs and the R-2R network,
+or a dedicated 3.3 V analog supply for the DAC.
+
+### Vertical brightness gradient on solid colour backgrounds
+
+Some monitors render an apparently smooth top-to-bottom gradient when
+fed a solid colour fill (e.g. a uniform red border showing red at the
+top and orange/yellow at the bottom). This is not coming from the
+firmware — every pixel byte is identical and the DAC has no temporal
+mechanism that could create a vertical gradient over a frame.
+
+The usual cause is the **monitor itself**: cheap LCD panels often have
+non-uniform backlight or active auto-contrast / auto-colour processing
+that gets confused when a large area of solid colour is paired with a
+contrasting black area in the same frame. The same firmware on a
+different monitor shows the colour as uniform. If you see this, try
+the firmware on a different display before assuming a firmware bug.
 
 ---
 
