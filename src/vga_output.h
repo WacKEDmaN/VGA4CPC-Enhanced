@@ -10,3 +10,10 @@ void vga_output_init(bool is_50hz);
 
 // Enable the SMs and trigger the DMA chain. Call after vga_output_init().
 void vga_output_start(void);
+
+// Toggle the CRT-style scanlines effect on or off at runtime. Rewrites
+// the odd-indexed entries of the DMA source-pointer ring; the swap is
+// effectively atomic per slot, so there's no torn output during the
+// transition. Safe to call from anywhere except inside an active DMA
+// chain step.
+void vga_output_set_scanlines(bool enabled);

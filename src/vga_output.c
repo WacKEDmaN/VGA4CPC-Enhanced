@@ -47,6 +47,10 @@ static uint32_t line_size[1024] __attribute__((aligned(4096)));
 static uint32_t tmp_sink;
 static uint8_t  black_line[CPC_ACTIVE_W];
 
+// Captured at init so vga_output_set_scanlines() can rebuild line_src[].
+static int g_scanline_count = 0;   // = lines_to_copy * 2
+static int g_scanline_skip  = 0;   // = skip_lines (CPC line index offset)
+
 // Programmed-value constants needed by the PIO SMs (too big for `set x, N`)
 #define V_ACTIVE_60_MINUS1     599u
 #define V_ACTIVE_50_MINUS1     575u
@@ -94,15 +98,13 @@ void vga_output_init(bool is_50hz) {
     const int dst_screen_height = is_50hz ? 576 : 600;
 
     // CPC × 2 = line-doubled output (each CPC line shown on 2 VGA lines).
-    // With WITH_SCANLINES, every second VGA line is replaced with
-    // black_line — producing visible dark gaps for a CRT-style scanline look.
+    // Initialised as plain NORMAL mode; runtime toggle handled by
+    // vga_output_set_scanlines() which rewrites the odd-indexed entries.
+    g_scanline_count   = lines_to_copy * 2;
+    g_scanline_skip    = skip_lines;
     for (int i = 0; i < lines_to_copy * 2; i++) {
         line_dst[i]  = &(VGA_PIO->txf[SM_VGA_RGB]);
-#if WITH_SCANLINES
-        line_src[i]  = (i & 1) ? black_line : framebuf[i / 2 + skip_lines];
-#else
         line_src[i]  = framebuf[i / 2 + skip_lines];
-#endif
         line_size[i] = CPC_ACTIVE_W;
     }
     // Pad with black lines to fill VGA visible
@@ -173,4 +175,17 @@ void vga_output_start(void) {
     pio_enable_sm_mask_in_sync(VGA_PIO,
         (1u << SM_VGA_HSYNC) | (1u << SM_VGA_VSYNC) | (1u << SM_VGA_RGB));
     dma_channel_start(DMA_CFG_A);
+}
+
+// Toggle scanlines on or off at runtime by rewriting the odd-indexed
+// entries in the DMA source-pointer ring. Each `line_src[]` slot is a
+// 32-bit pointer, written atomically on Cortex-M0+, so the output DMA
+// either sees the old pointer or the new one — no torn reads. Worst
+// case is one VGA frame of mixed normal/scanlined rows during the
+// switch (~20 ms at 50 Hz), which is imperceptible.
+void vga_output_set_scanlines(bool enabled) {
+    for (int i = 1; i < g_scanline_count; i += 2) {
+        line_src[i] = enabled ? black_line
+                              : framebuf[i / 2 + g_scanline_skip];
+    }
 }

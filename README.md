@@ -25,11 +25,13 @@ the original timings and PIO designs.
 > the scan-doubler output — on a VGA monitor connected directly to the
 > PCB the image is appreciably sharper.*
 
-CPC BASIC 1.1 prompt on an Amstrad 6128 — the two build variants side by side:
+CPC BASIC 1.1 prompt on an Amstrad 6128 — the two display modes side by
+side (both ship in the same firmware; press **BOOTSEL** at runtime to
+toggle between them):
 
-| NORMAL | NORMAL_SCANLINES |
+| Normal mode | Scanlines mode |
 |:---:|:---:|
-| ![NORMAL build — clean line-doubled output](images/VGA4CPC_NORMAL.png) | ![NORMAL_SCANLINES build — CRT-style dark gap between scanlines](images/VGA4CPC_SCANLINES.png) |
+| ![Normal mode — clean line-doubled output](images/VGA4CPC_NORMAL.png) | ![Scanlines mode — CRT-style dark gap between scanlines](images/VGA4CPC_SCANLINES.png) |
 
 Running real CPC software — Batman intro logo and a mode-0 cutscene
 illustrating the full colour range and borders the scan-doubler
@@ -43,9 +45,9 @@ preserves:
 
 Click through to YouTube for live captures of the firmware running:
 
-| NORMAL + "no signal" hand-off | NORMAL_SCANLINES |
+| Normal mode + "no signal" hand-off | Scanlines mode |
 |:---:|:---:|
-| [![NORMAL build live, with the "no signal" card switching in when the CPC powers off](https://img.youtube.com/vi/u6UePIkd_Jg/hqdefault.jpg)](https://www.youtube.com/watch?v=u6UePIkd_Jg) | [![NORMAL_SCANLINES build live, showing the CRT-style dark-gap scanlines](https://img.youtube.com/vi/mkgNcqdlhVY/hqdefault.jpg)](https://www.youtube.com/watch?v=mkgNcqdlhVY) |
+| [![Normal mode live, with the "no signal" card switching in when the CPC powers off](https://img.youtube.com/vi/u6UePIkd_Jg/hqdefault.jpg)](https://www.youtube.com/watch?v=u6UePIkd_Jg) | [![Scanlines mode live, showing the CRT-style dark-gap scanlines](https://img.youtube.com/vi/mkgNcqdlhVY/hqdefault.jpg)](https://www.youtube.com/watch?v=mkgNcqdlhVY) |
 
 ---
 
@@ -82,19 +84,27 @@ Click through to YouTube for live captures of the firmware running:
 
 ## Flash & use
 
-**Most users want this section, not the Build section below.** Prebuilt
-firmware images are committed to [`dist/`](dist/) — grab one and flash:
+**Most users want this section, not the Build section below.** A
+single prebuilt firmware image is committed to [`dist/`](dist/):
 
-- [`dist/vga4cpc_enhanced_NORMAL.uf2`](dist/vga4cpc_enhanced_NORMAL.uf2)
-- [`dist/vga4cpc_enhanced_NORMAL_SCANLINES.uf2`](dist/vga4cpc_enhanced_NORMAL_SCANLINES.uf2)
+- [`dist/vga4cpc_enhanced.uf2`](dist/vga4cpc_enhanced.uf2)
 
-1. Hold BOOTSEL while plugging the Pico into USB, then drop one of the
-   `.uf2` files from `dist/` onto the `RPI-RP2` drive.
+1. Hold BOOTSEL while plugging the Pico into USB, then drop the
+   `.uf2` file from `dist/` onto the `RPI-RP2` drive.
 2. Plug the VGA cable into your monitor.
 3. Connect the CPC's RGB cable to the PCB.
 4. Pick the output mode with the slide switch on GPIO 26:
    - **closed / LOW** → 576p50 (CEA-861, ~50.08 Hz, scaled to ~800px wide)
    - **open / HIGH**  → 800×600p60 (DMT)
+
+### Scanlines toggle (BOOTSEL button)
+
+Once the firmware is running, **press the BOOTSEL button** on the Pico
+to toggle the CRT-style scanlines effect on or off. Each press flips
+the mode; button must be released before the next press counts.
+
+Default at power-on is **scanlines off**. The setting is not persisted
+across power cycles, so the firmware always starts in normal mode.
 
 The on-board LED (GPIO 25, PWM-dimmed to ~half brightness) indicates
 sync state:
@@ -151,9 +161,7 @@ Requirements:
 build.cmd
 ```
 
-Builds both variants into `dist\`:
-- `vga4cpc_enhanced_NORMAL.uf2`
-- `vga4cpc_enhanced_NORMAL_SCANLINES.uf2`
+Builds the single firmware into `dist\vga4cpc_enhanced.uf2`.
 
 The script assumes the default Windows SDK path
 (`C:\Program Files\Raspberry Pi\Pico SDK v1.5.1`). Edit the `SDK`
@@ -163,7 +171,7 @@ variable at the top of `build.cmd` if yours lives elsewhere.
 
 ```sh
 mkdir build && cd build
-cmake -G Ninja -DPICO_SDK_PATH=/path/to/pico-sdk -DSCANLINES=OFF ..
+cmake -G Ninja -DPICO_SDK_PATH=/path/to/pico-sdk ..
 ninja
 ```
 
@@ -172,8 +180,9 @@ shell so you don't need to repeat it. The `CMakeLists.txt` default
 points at the Windows install location, so passing `-DPICO_SDK_PATH`
 explicitly is recommended on Linux/macOS.
 
-The `SCANLINES=ON` variant inserts a black line between each pair of
-output lines for a CRT-style scanline look.
+Scanlines are a **runtime** option now — there's no compile flag for
+them. The single UF2 contains both normal and scanlines modes; the
+user toggles at runtime via the BOOTSEL button.
 
 ---
 
@@ -243,14 +252,22 @@ including borders). The `rgb_50` PIO sends 800 pixels into a 720-pixel
 CPC display (borders included) fit a typical VGA monitor's visible
 area. Monitors still detect a standard 720×576p50 signal.
 
-### Build variants
+### Display modes
 
-Only two variants are shipped:
+A single firmware UF2 ships both display modes; the user toggles between
+them at runtime via the BOOTSEL button (see *Flash & use* above):
 
-| Variant            | `SCANLINES` | Description                            |
-|--------------------|-------------|----------------------------------------|
-| NORMAL             | OFF         | Plain colour scan-doubled output       |
-| NORMAL_SCANLINES   | ON          | CRT-style dark gap between scanlines   |
+| Mode             | Description                                   |
+|------------------|-----------------------------------------------|
+| Normal (default) | Plain colour scan-doubled output              |
+| Scanlines        | CRT-style dark gap between every pair of lines|
+
+The scanlines effect is implemented by flipping the odd-indexed entries
+of the output-DMA's source-pointer ring between the framebuffer rows
+and a single all-black row. Toggling has no measurable effect on
+capture / output performance — each `line_src[]` slot is a single
+32-bit pointer, written atomically from the capture loop's per-frame
+BOOTSEL check.
 
 Earlier development versions experimented with monochrome / amber /
 green "P1/P3 phosphor" effects, but they were abandoned because the

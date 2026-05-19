@@ -17,12 +17,14 @@ were all written by Claude under their direction.
 Repo: <https://github.com/WacKEDmaN/VGA4CPC-Enhanced> — public domain
 (Unlicense).
 
-## Current status (as of last commit `71e563b`)
+## Current status
 
-**Pico 1 (RP2040) firmware is feature-complete and shipped.** Both
-`dist/vga4cpc_enhanced_NORMAL.uf2` and `dist/vga4cpc_enhanced_NORMAL_SCANLINES.uf2`
-work cleanly on the grzegorz-gr PCB. Side-by-side comparison against
-upstream confirmed this build shows visibly *less* edge fringing.
+**Pico 1 (RP2040) firmware is feature-complete and shipped.** A single
+`dist/vga4cpc_enhanced.uf2` contains both normal and scanlines display
+modes, runtime-toggleable via the Pico's BOOTSEL button (handled by a
+RAM-resident QSPI-CS-read helper in `capture.c`, polled once per CPC
+frame). Side-by-side comparison against upstream confirmed this build
+shows visibly *less* edge fringing.
 
 The remaining low-grade artefacts are analog (CPC gate-array
 transitions, comparator settling, unbuffered R-2R DAC into VGA cable).

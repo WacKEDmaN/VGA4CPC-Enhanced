@@ -25,23 +25,8 @@ include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 project(vga4cpc_enhanced C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 
-# ---------------------------------------------------------------------
-# Build variants
-#
-#   -DSCANLINES=ON | OFF   (default OFF)
-#
-# Examples:
-#   cmake -G Ninja ..                       # NORMAL
-#   cmake -G Ninja -DSCANLINES=ON ..        # NORMAL + CRT scanlines
-# ---------------------------------------------------------------------
-option(SCANLINES "Enable CRT-style scanlines" OFF)
-
-if(SCANLINES)
-    set(VARIANT_NAME "NORMAL_SCANLINES")
-else()
-    set(VARIANT_NAME "NORMAL")
-endif()
-message(STATUS "Building VGA4CPC-Enhanced variant: ${VARIANT_NAME}")
+# Single firmware. Scanlines are now a runtime option — press the
+# Pico's BOOTSEL button to toggle them on/off while running.
 
 pico_sdk_init()
 
@@ -50,15 +35,6 @@ add_executable(vga4cpc_enhanced
     src/framebuffer.c
     src/capture.c
     src/vga_output.c
-)
-
-if(SCANLINES)
-    target_compile_definitions(vga4cpc_enhanced PRIVATE WITH_SCANLINES=1)
-endif()
-
-# Rename output binary to reflect variant
-set_target_properties(vga4cpc_enhanced PROPERTIES
-    OUTPUT_NAME "vga4cpc_enhanced_${VARIANT_NAME}"
 )
 
 # CPC capture PIO programs

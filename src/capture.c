@@ -10,6 +10,7 @@
 #include "capture.h"
 #include "hardware_config.h"
 #include "framebuffer.h"
+#include "vga_output.h"
 
 #include "rgbin.pio.h"
 #include "vsyncgen.pio.h"
@@ -18,11 +19,49 @@
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
+#include "hardware/sync.h"
 #include "hardware/timer.h"
+#include "hardware/structs/ioqspi.h"
+#include "hardware/structs/sio.h"
 #include "pico/stdlib.h"
 #include "pico/platform.h"
 
 #include <string.h>
+
+// =====================================================================
+// BOOTSEL button read.
+//
+// The BOOTSEL button on the Pico isn't on a normal GPIO — it's wired to
+// the QSPI chip-select pin of the flash chip. To read it we have to
+// (briefly) put that pin into Hi-Z, sample the SIO HI input register,
+// then restore the override. During the brief Hi-Z window the flash
+// can't be read, so this function must live in RAM and must not call
+// into any flash-resident code. Standard pico-sdk recipe.
+// =====================================================================
+static bool __no_inline_not_in_flash_func(get_bootsel_button)(void) {
+    const uint CS_PIN_INDEX = 1u;
+
+    uint32_t flags = save_and_disable_interrupts();
+
+    // Set chip select to Hi-Z so the button pull-up wins.
+    hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
+                    GPIO_OVERRIDE_LOW << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
+                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
+
+    // Tiny settling delay — must not call sleep_us() (that lives in flash).
+    for (volatile int i = 0; i < 1000; ++i) { }
+
+    // Button pulls the pin LOW when pressed.
+    bool pressed = !(sio_hw->gpio_hi_in & (1u << CS_PIN_INDEX));
+
+    // Restore CS to its normal driven state.
+    hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
+                    GPIO_OVERRIDE_NORMAL << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
+                    IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
+
+    restore_interrupts(flags);
+    return pressed;
+}
 
 // =====================================================================
 // Capture pipeline — straight port of grzegorz-gr/vga4cpc firmware.
@@ -128,6 +167,14 @@ void __not_in_flash_func(capture_run_forever)(void) {
     uint32_t last_vsync_us = time_us_32();
     bool     test_pattern_shown = false;   // true while no-signal card is up
 
+    // BOOTSEL-driven scanlines toggle. Default OFF at boot. Edge-detected:
+    // one press = one toggle; button must be released before next press
+    // re-arms the toggle. Checked once per CPC frame (so ~20 ms cadence
+    // gives natural debouncing without explicit timing logic).
+    bool scanlines_on   = false;
+    bool bootsel_armed  = true;
+    vga_output_set_scanlines(scanlines_on);
+
     // LED diagnostic (PWM-dimmed to ~half brightness so it's not blindingly
     // bright in a dark room):
     //   ~1 Hz flash  → waiting for sync (CPC off / disconnected)
@@ -182,6 +229,16 @@ void __not_in_flash_func(capture_run_forever)(void) {
 
         // Sync is good → LED solid at half brightness.
         pwm_set_chan_level(led_slice, led_chan, LED_HALF);
+
+        // Once per CPC frame, check BOOTSEL. Press toggles scanlines.
+        bool bs = get_bootsel_button();
+        if (bs && bootsel_armed) {
+            scanlines_on = !scanlines_on;
+            vga_output_set_scanlines(scanlines_on);
+            bootsel_armed = false;          // wait for release
+        } else if (!bs) {
+            bootsel_armed = true;
+        }
 
         // Black-fill the tail of the previous frame.
         for (int y = line; y < FB_H; y++) {

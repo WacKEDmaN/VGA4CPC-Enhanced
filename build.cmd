@@ -1,9 +1,9 @@
 @echo off
 :: =====================================================================
-:: VGA4CPC-Enhanced — build both variants (NORMAL and NORMAL_SCANLINES)
-:: Run from the project directory.
-:: Output: dist\vga4cpc_enhanced_NORMAL.uf2
-::         dist\vga4cpc_enhanced_NORMAL_SCANLINES.uf2
+:: VGA4CPC-Enhanced — build single firmware UF2
+:: Scanlines effect is a runtime toggle (BOOTSEL button), not a build
+:: variant, so there's only one UF2 to ship.
+:: Output: dist\vga4cpc_enhanced.uf2
 :: =====================================================================
 
 set SDK=C:\Program Files\Raspberry Pi\Pico SDK v1.5.1
@@ -13,44 +13,30 @@ set CMAKE=%SDK%\cmake\bin
 set PATH=%TOOLCHAIN%;%NINJA%;%CMAKE%;%PATH%
 
 if not exist dist mkdir dist
+if not exist build mkdir build
 
-call :build_variant NORMAL            OFF
-if errorlevel 1 goto :fail
-call :build_variant NORMAL_SCANLINES  ON
-if errorlevel 1 goto :fail
-
-echo.
-echo ============================================================
-echo  BUILD OK
-echo ============================================================
-dir dist\*.uf2
-exit /b 0
-
-:build_variant
-set VARIANT=%~1
-set SCANLINES=%~2
-set BUILDDIR=build_%VARIANT%
-
-echo.
-echo --- Building %VARIANT% (SCANLINES=%SCANLINES%) ---
-if not exist %BUILDDIR% mkdir %BUILDDIR%
-pushd %BUILDDIR%
+pushd build
 
 if not exist CMakeCache.txt (
     cmake.exe -G "Ninja" ^
         -DCMAKE_MAKE_PROGRAM="%NINJA%\ninja.exe" ^
         -DPICO_SDK_PATH="%SDK%\pico-sdk" ^
         -DPICO_TOOLCHAIN_PATH="%TOOLCHAIN%" ^
-        -DSCANLINES=%SCANLINES% ^
         ..
-    if errorlevel 1 (popd & exit /b 1)
+    if errorlevel 1 (popd & goto :fail)
 )
 
 ninja.exe
-if errorlevel 1 (popd & exit /b 1)
+if errorlevel 1 (popd & goto :fail)
 
-copy /Y vga4cpc_enhanced_%VARIANT%.uf2 ..\dist\ >nul
+copy /Y vga4cpc_enhanced.uf2 ..\dist\ >nul
 popd
+
+echo.
+echo ============================================================
+echo  BUILD OK
+echo ============================================================
+dir dist\*.uf2
 exit /b 0
 
 :fail
