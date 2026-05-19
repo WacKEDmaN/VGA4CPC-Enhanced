@@ -409,38 +409,35 @@ the firmware on a different display before assuming a firmware bug.
 The Known limitations above are real but addressable with small
 hardware additions if they're bothering you. None of these are
 required — the firmware works as-shipped on a stock vga4cpc PCB —
-but they're easy to fit and give real improvements.
+but the buffer mod below is the proper fix for the DAC rail droop /
+cross-channel coupling issue.
 
-### Bulk 3.3 V decoupling — mitigates DAC rail droop
+### Don't bother with a bulk decoupling cap on the 3.3 V rail
 
-If you notice the red intensity subtly modulating when the border
-flashes between bright blue and bright red (see *Brightness coupling
-between colour channels* in Known limitations), it's because the Pico's
-3.3 V rail droops a few mV when the DAC pins suddenly source more
-current. A single bulk capacitor on the rail soaks up most of that
-droop without touching the firmware.
+An earlier version of this README suggested adding a 220–470 µF
+electrolytic between Pico pin 36 (3V3) and GND to soak up DAC rail
+droop. **It doesn't work, and worse, it makes things worse.** Empirical
+test: adding a 470 µF / 35 V cap caused moving bands of noise across
+the picture and *no* improvement to the red-intensity-modulation issue.
 
-| Component | Value | Where it goes |
-|-----------|-------|---------------|
-| Electrolytic | **220 µF or 470 µF**, 6.3 V+ | Between Pico pin **36 (3V3)** and any GND pin (38, 23, 28, 18, 13, 8, 3), as close to the Pico as possible. |
-| Ceramic (optional, in parallel) | 1–10 µF X7R | Same two pads. Catches the faster transients the bulk cap is too slow for. |
+Two reasons the cap doesn't help:
 
-A ceramic 0.1 µF is *not* needed here — the Pico already has internal
-equivalents at the chip.
+- **It destabilises the regulator.** The Pico uses an **RT6150 buck-boost
+  SMPS**, not an LDO. Switching regulators have a control loop tuned
+  for a specific output-cap range (~22 µF for the RT6150); a 470 µF
+  bulk cap is far outside that range and pushes the loop into low-
+  frequency oscillation. The oscillation isn't phase-locked to the
+  CPC frame rate, so it shows as slow rolling bands on the picture.
+- **The droop probably isn't on the 3.3 V rail at all.** The colour-
+  coupling effect almost certainly comes from **ground bounce** and
+  **I/O pad supply droop inside the RP2040's package** when multiple
+  GPIOs switch simultaneously — no amount of external capacitance
+  can fix either, because both happen on the wrong side of the chip's
+  bond wires.
 
-**Sizing logic:** worst case is ~50 mA extra current draw lasting ~50 µs
-(a whole CPC line of bright-blue border). For a ≤10 mV droop budget,
-C ≥ I × Δt / ΔV = 0.05 × 50e-6 / 0.01 = **250 µF**. So 220 µF is just
-inside the zone; 470 µF is comfortable headroom.
-
-**What this fixes:** line-rate droop where the rail can't keep up with
-border-vs-background load changes. The visible effect should drop from
-"obvious" to "imperceptible without specifically looking for it".
-
-**What this doesn't fix:** the residual cross-channel coupling at very
-high speeds (the cap is downstream of the Pico's bond wires and PCB
-traces, so VDDIO still sees *some* droop). For complete elimination,
-see the 74HCT245 buffer mod below.
+**Bottom line:** don't add bulk caps to the Pico rail. The only mod
+that actually helps the colour coupling is the buffer chip below,
+which moves the DAC's current load off the Pico's package entirely.
 
 ### 74HCT245 / 74HC245 buffer — full DAC decoupling
 
