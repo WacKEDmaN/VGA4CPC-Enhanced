@@ -17,6 +17,7 @@
 
 #include "hardware/pio.h"
 #include "hardware/dma.h"
+#include "hardware/flash.h"
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
 #include "hardware/sync.h"
@@ -61,6 +62,49 @@ static bool __no_inline_not_in_flash_func(get_bootsel_button)(void) {
 
     restore_interrupts(flags);
     return pressed;
+}
+
+// =====================================================================
+// Persistent settings (last flash sector)
+//
+// One 4 KB sector at the very end of flash is reserved for user
+// settings — currently just the scanlines on/off flag. Layout:
+//
+//   offset 0..3   magic (PERSIST_MAGIC) — distinguishes a valid record
+//                 from blank flash (0xFF…FF) or stale data from a
+//                 previous firmware version.
+//   offset 4      scanlines flag (0x00 = off, 0x01 = on)
+//   offset 5..    reserved
+//
+// flash_range_erase() / flash_range_program() are themselves RAM-
+// resident in the SDK and handle XIP suspend/resume internally, but
+// while they're running ALL flash reads stall. Interrupts must be
+// off and Core 1 (if used) paused. Cost: ~50 ms per save. We accept
+// that brief capture-loop pause; the output DMA reads from RAM so
+// the picture itself is unaffected.
+// =====================================================================
+#define PERSIST_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+#define PERSIST_FLASH_ADDR   ((const uint8_t *)(XIP_BASE + PERSIST_FLASH_OFFSET))
+#define PERSIST_MAGIC        0xCAFE4CB7u
+
+static bool persist_load_scanlines(void) {
+    uint32_t magic;
+    memcpy(&magic, PERSIST_FLASH_ADDR, sizeof(magic));
+    if (magic != PERSIST_MAGIC) return false;   // blank / corrupt → default off
+    return PERSIST_FLASH_ADDR[4] == 0x01u;
+}
+
+static void persist_save_scanlines(bool on) {
+    uint8_t buf[FLASH_PAGE_SIZE];
+    memset(buf, 0xFF, sizeof(buf));             // keep unused bytes erased
+    uint32_t magic = PERSIST_MAGIC;
+    memcpy(buf, &magic, sizeof(magic));
+    buf[4] = on ? 0x01u : 0x00u;
+
+    uint32_t flags = save_and_disable_interrupts();
+    flash_range_erase(PERSIST_FLASH_OFFSET, FLASH_SECTOR_SIZE);
+    flash_range_program(PERSIST_FLASH_OFFSET, buf, FLASH_PAGE_SIZE);
+    restore_interrupts(flags);
 }
 
 // =====================================================================
@@ -167,11 +211,12 @@ void __not_in_flash_func(capture_run_forever)(void) {
     uint32_t last_vsync_us = time_us_32();
     bool     test_pattern_shown = false;   // true while no-signal card is up
 
-    // BOOTSEL-driven scanlines toggle. Default OFF at boot. Edge-detected:
-    // one press = one toggle; button must be released before next press
-    // re-arms the toggle. Checked once per CPC frame (so ~20 ms cadence
-    // gives natural debouncing without explicit timing logic).
-    bool scanlines_on   = false;
+    // BOOTSEL-driven scanlines toggle. Initial state is loaded from the
+    // persistence sector in flash (blank/corrupt → defaults to off).
+    // Edge-detected: one press = one toggle; button must be released
+    // before next press re-arms the toggle. Checked once per CPC frame
+    // (~20 ms cadence — gives natural debouncing).
+    bool scanlines_on   = persist_load_scanlines();
     bool bootsel_armed  = true;
     vga_output_set_scanlines(scanlines_on);
 
@@ -230,11 +275,13 @@ void __not_in_flash_func(capture_run_forever)(void) {
         // Sync is good → LED solid at half brightness.
         pwm_set_chan_level(led_slice, led_chan, LED_HALF);
 
-        // Once per CPC frame, check BOOTSEL. Press toggles scanlines.
+        // Once per CPC frame, check BOOTSEL. Press toggles scanlines
+        // and persists the new state to flash so it survives a reset.
         bool bs = get_bootsel_button();
         if (bs && bootsel_armed) {
             scanlines_on = !scanlines_on;
             vga_output_set_scanlines(scanlines_on);
+            persist_save_scanlines(scanlines_on);   // ~50 ms blocking write
             bootsel_armed = false;          // wait for release
         } else if (!bs) {
             bootsel_armed = true;

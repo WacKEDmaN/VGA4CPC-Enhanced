@@ -23,8 +23,11 @@ Repo: <https://github.com/WacKEDmaN/VGA4CPC-Enhanced> — public domain
 `dist/vga4cpc_enhanced.uf2` contains both normal and scanlines display
 modes, runtime-toggleable via the Pico's BOOTSEL button (handled by a
 RAM-resident QSPI-CS-read helper in `capture.c`, polled once per CPC
-frame). Side-by-side comparison against upstream confirmed this build
-shows visibly *less* edge fringing.
+frame). The chosen mode is persisted in the last 4 KB flash sector
+with a 32-bit magic header (PERSIST_MAGIC = 0xCAFE4CB7); see
+`persist_load_scanlines()` / `persist_save_scanlines()` in `capture.c`.
+Side-by-side comparison against upstream confirmed this build shows
+visibly *less* edge fringing.
 
 The remaining low-grade artefacts are analog (CPC gate-array
 transitions, comparator settling, unbuffered R-2R DAC into VGA cable).

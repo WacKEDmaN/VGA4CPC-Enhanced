@@ -54,6 +54,7 @@ target_compile_options(vga4cpc_enhanced PRIVATE -O2)
 target_link_libraries(vga4cpc_enhanced PRIVATE
     pico_stdlib
     hardware_dma
+    hardware_flash
     hardware_pio
     hardware_pwm
     hardware_irq

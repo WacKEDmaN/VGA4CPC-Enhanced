@@ -103,8 +103,10 @@ Once the firmware is running, **press the BOOTSEL button** on the Pico
 to toggle the CRT-style scanlines effect on or off. Each press flips
 the mode; button must be released before the next press counts.
 
-Default at power-on is **scanlines off**. The setting is not persisted
-across power cycles, so the firmware always starts in normal mode.
+The selected mode is **persisted to the last 4 KB sector of the Pico's
+flash**, so it survives power cycles — set your preference once and
+the firmware will boot into the same mode next time. First-ever boot
+(blank persistence sector) defaults to **scanlines off**.
 
 The on-board LED (GPIO 25, PWM-dimmed to ~half brightness) indicates
 sync state:
