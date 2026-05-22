@@ -45,20 +45,26 @@
 #define PIN_VGA_RGB_BASE 14   // GPIO 14..19 — 6-bit R-2R DAC
 
 // ---------------------------------------------------------------------
-// System clock — 128 MHz.
-// Required for exact 16 MHz CPC capture clock (128 / 8 = 16 MHz).
-// This is the same clock the upstream grzegorz-gr/vga4cpc firmware uses,
-// so all PIO timing constants here are directly compatible with it.
+// System clock — per-mode, chosen at boot based on the 50/60 Hz switch.
+//
+//   50 Hz mode: 128 MHz. Lets every PIO program use the original
+//               upstream clkdivs verbatim (the 50 Hz path is timing-
+//               sensitive and monitors are fussier about it; matching
+//               upstream bit-for-bit avoids reintroducing fractional-
+//               divider artefacts that show as jittery text edges).
+//
+//   60 Hz mode: 160 MHz. Divides cleanly to 40 MHz pixel clock for
+//               exact DMT 800×600p60 (160/4 with integer clkdiv 4) and
+//               keeps the capture path at 16 MHz (rgbin clkdiv 1+64/256
+//               → SM = 128 MHz × 8 cycles/pixel = 16 MHz capture).
+//
+// main.c reads PIN_SWITCH before calling set_sys_clock_khz() so the
+// PLL is configured for the right mode before any PIO is loaded.
+// rgbin and vsyncgen — which run in both modes — pick their clkdiv
+// at program-init time based on the same switch read.
 // ---------------------------------------------------------------------
-#define SYS_CLOCK_KHZ    128000
-
-// Capture SM clock dividers (128 MHz / 8 = 16 MHz exact, integer)
-#define CAP_DIV_INT      8
-#define CAP_DIV_FRAC     0
-
-// vsyncgen runs at full system clock for fine VSYNC/HSYNC discrimination
-#define VSGEN_DIV_INT    1
-#define VSGEN_DIV_FRAC   0
+#define SYS_CLOCK_KHZ_50HZ   128000
+#define SYS_CLOCK_KHZ_60HZ   160000
 
 // ---------------------------------------------------------------------
 // CPC video signal parameters

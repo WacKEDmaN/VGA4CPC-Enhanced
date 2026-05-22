@@ -199,15 +199,15 @@ static uint vsg_offset      = 0xFFFFu;
 
 static volatile uint32_t last_hsync_us = 0;
 
-void capture_init(void) {
+void capture_init(bool is_50hz) {
     if (vsg_offset == 0xFFFFu)
         vsg_offset = pio_add_program(CAP_PIO, &vsyncgen_program);
     if (rgb_offset == 0xFFFFu)
         rgb_offset = pio_add_program(CAP_PIO, &rgbin_program);
 
     vsyncgen_program_init(CAP_PIO, SM_VSYNCGEN, vsg_offset,
-                          PIN_CSYNC, PIN_VSYNC_GEN);
-    rgbin_program_init(CAP_PIO, SM_RGBIN, rgb_offset, PIN_RGB_IN_BASE);
+                          PIN_CSYNC, PIN_VSYNC_GEN, is_50hz);
+    rgbin_program_init(CAP_PIO, SM_RGBIN, rgb_offset, PIN_RGB_IN_BASE, is_50hz);
 
     // Tell the rgbin SM how many pixels to sample per line: CPC_ACTIVE_W - 1
     pio_sm_put_blocking(CAP_PIO, SM_RGBIN, CPC_ACTIVE_W - 1u);

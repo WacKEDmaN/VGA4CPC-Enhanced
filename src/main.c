@@ -5,9 +5,10 @@
 // (Raspberry Pi Pico based). Captures the live CPC RGB+CSYNC signal
 // at 16 MHz, line-doubles it, and emits 576p50 or 800×600p60 VGA.
 //
-//   sys_clock = 128 MHz       — exact 16 MHz CPC capture (128 / 8)
-//   PIO0                      — VGA output (hsync, vsync, rgb SMs)
-//   PIO1                      — CPC capture (vsyncgen + rgb sampler)
+//   sys_clock:  128 MHz in 50 Hz mode, 160 MHz in 60 Hz mode (see
+//               hardware_config.h for rationale).
+//   PIO0     :  VGA output (hsync, vsync, rgb SMs)
+//   PIO1     :  CPC capture (vsyncgen + rgb sampler)
 //
 // The 50/60 Hz output mode is selected by the slide switch on GPIO 26
 // at boot (closed/LOW = 576p50, open/HIGH = 800×600p60).
@@ -21,7 +22,16 @@
 #include "vga_output.h"
 
 int main(void) {
-    set_sys_clock_khz(SYS_CLOCK_KHZ, true);
+    // Read the 50/60 Hz switch *before* picking sys_clock — the 50 Hz
+    // path keeps the upstream 128 MHz timing untouched, while 60 Hz
+    // wants 160 MHz for exact-DMT 800×600p60.
+    gpio_init(PIN_SWITCH);
+    gpio_set_dir(PIN_SWITCH, GPIO_IN);
+    gpio_pull_up(PIN_SWITCH);
+    sleep_ms(1);
+    bool is_50hz = !gpio_get(PIN_SWITCH);
+
+    set_sys_clock_khz(is_50hz ? SYS_CLOCK_KHZ_50HZ : SYS_CLOCK_KHZ_60HZ, true);
 
     // LED stays off during init — capture_run_forever takes it over
     // and drives it via PWM for the rest of runtime.
@@ -32,15 +42,8 @@ int main(void) {
     // and will repaint it whenever sync is lost for >3 seconds.
     fb_paint_test_pattern();
 
-    // 50/60 Hz mode switch on GPIO 26 (pull-up; closed = 50 Hz)
-    gpio_init(PIN_SWITCH);
-    gpio_set_dir(PIN_SWITCH, GPIO_IN);
-    gpio_pull_up(PIN_SWITCH);
-    sleep_ms(1);
-    bool is_50hz = !gpio_get(PIN_SWITCH);
-
     vga_output_init(is_50hz);
-    capture_init();
+    capture_init(is_50hz);
     vga_output_start();
 
     // Core 0 owns the capture polling loop from here on

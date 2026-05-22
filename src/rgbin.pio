@@ -46,7 +46,7 @@ readpixel:
 
 
 % c-sdk {
-static inline void rgbin_program_init(PIO pio, uint sm, uint offset, uint first_rgb_pin) {
+static inline void rgbin_program_init(PIO pio, uint sm, uint offset, uint first_rgb_pin, bool is_50hz) {
     pio_sm_config c = rgbin_program_get_default_config(offset);
     sm_config_set_in_pins(&c, first_rgb_pin);
     pio_sm_set_consecutive_pindirs(pio, sm, first_rgb_pin, 7, false);
@@ -54,6 +54,15 @@ static inline void rgbin_program_init(PIO pio, uint sm, uint offset, uint first_
         pio_gpio_init(pio, first_rgb_pin + i);
     }
     sm_config_set_in_shift(&c, false, false, 6);
+    // Want SM clock = 128 MHz in both modes (so the per-pixel 8-cycle
+    // loop gives an exact 16 MHz capture rate matching the CPC).
+    //   50 Hz mode:  sys_clock = 128 MHz → no divider needed.
+    //   60 Hz mode:  sys_clock = 160 MHz → clkdiv 1 + 64/256 = 1.25.
+    if (is_50hz) {
+        sm_config_set_clkdiv_int_frac(&c, 1, 0);
+    } else {
+        sm_config_set_clkdiv_int_frac(&c, 1, 64);
+    }
     pio_sm_init(pio, sm, offset, &c);
 }
 %}

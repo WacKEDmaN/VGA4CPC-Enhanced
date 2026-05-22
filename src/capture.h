@@ -3,8 +3,10 @@
 #include <stdint.h>
 
 // Initialise PIO programs, claim a DMA channel, register IRQ handlers.
+// `is_50hz` selects per-mode clkdivs for the rgbin and vsyncgen SMs
+// (both run in both modes but at different sys_clock values).
 // Call from Core 0 before launching Core 1.
-void capture_init(void);
+void capture_init(bool is_50hz);
 
 // Arm DMA and enable both PIO state machines simultaneously.
 // Call from Core 0 after capture_init().

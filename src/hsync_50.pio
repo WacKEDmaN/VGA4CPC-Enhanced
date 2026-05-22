@@ -69,6 +69,8 @@ static inline void hsync_50_program_init(PIO pio, uint sm, uint offset, uint pin
 
     // Source of this number is explained obove. It must be the same as in vsync sm and be a multiply of rgb sm divider,
     // or there must be no divider in rgb sm (like in this case). In other case, screen would look terrible (each line is randomly moving horizontally)
+    // 50 Hz mode runs at sys_clock = 128 MHz. clkdiv 18 + 240/256 →
+    // SM clock = 6.76 MHz, matching upstream's tuned 720x576p50 timing.
     sm_config_set_clkdiv_int_frac(&c, 18, 240);
     pio_gpio_init(pio, pin);
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);

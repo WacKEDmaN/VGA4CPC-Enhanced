@@ -51,11 +51,23 @@ static uint8_t  black_line[CPC_ACTIVE_W];
 static int g_scanline_count = 0;   // = lines_to_copy * 2
 static int g_scanline_skip  = 0;   // = skip_lines (CPC line index offset)
 
-// Programmed-value constants needed by the PIO SMs (too big for `set x, N`)
+// Programmed-value constants needed by the PIO SMs (too big for `set x, N`).
+//
+// H_ACTIVE_FRONT_*_M2 is the count pushed to the corresponding hsync_*
+// SM's "visibleandfront" loop. The loop runs (osr + 2) SM cycles, so
+// the value here is (HACT + HFP) - 2 in *SM cycles*. The 50 Hz and
+// 60 Hz hsync SMs run at different clkdivs so their SM-cycles-per-pixel
+// ratios differ — these numbers reflect the each-mode-specific timing:
+//
+//   60 Hz mode (DMT 800×600p60, SM clock 40 MHz, 1 SM cycle = 1 pixel):
+//     HACT 800 + HFP 40 = 840 pixels → osr = 838
+//
+//   50 Hz mode (CEA-861 720×576p50 with 800-px overscan, SM clock
+//   6.76 MHz, 1 SM cycle ≈ 4 pixels): keeps original upstream value.
 #define V_ACTIVE_60_MINUS1     599u
 #define V_ACTIVE_50_MINUS1     575u
 #define RGB_ACTIVE_MINUS1      (CPC_ACTIVE_W - 1u)
-#define H_ACTIVE_FRONT_60_M2   313u
+#define H_ACTIVE_FRONT_60_M2   838u
 #define H_ACTIVE_FRONT_50_M2   181u
 
 void vga_output_init(bool is_50hz) {

@@ -31,13 +31,18 @@ waitabit:
 
 % c-sdk {
 static inline void vsyncgen_program_init(PIO pio, uint sm, uint offset,
-                                          uint csync_in_pin, uint vsync_out_pin) {
+                                          uint csync_in_pin, uint vsync_out_pin,
+                                          bool is_50hz) {
     pio_sm_config c = vsyncgen_program_get_default_config(offset);
 
     sm_config_set_in_pins(&c, csync_in_pin);
     sm_config_set_jmp_pin(&c, csync_in_pin);
     sm_config_set_set_pins(&c, vsync_out_pin, 1);
-    sm_config_set_clkdiv(&c, 8.0f);
+    // Want SM clock = 16 MHz in both modes (the discriminator's "wait a
+    // bit" loop is calibrated for that rate).
+    //   50 Hz mode:  sys_clock = 128 MHz → clkdiv = 8.
+    //   60 Hz mode:  sys_clock = 160 MHz → clkdiv = 10.
+    sm_config_set_clkdiv(&c, is_50hz ? 8.0f : 10.0f);
     pio_gpio_init(pio, csync_in_pin);
     pio_gpio_init(pio, vsync_out_pin);
     pio_sm_set_consecutive_pindirs(pio, sm, csync_in_pin, 1, false);

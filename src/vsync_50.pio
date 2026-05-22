@@ -72,6 +72,8 @@ static inline void vsync_50_program_init(PIO pio, uint sm, uint offset, uint pin
     // (irq 1 arrives to rgb sm from here) must be constant and predictable, so can be taken
     // into account in rgb sm. In other case each line will move a bit to the sides and
     // that looks shitty or even unusable.
+    // 50 Hz mode runs at sys_clock = 128 MHz. Match hsync_50's SM clock
+    // (6.76 MHz) for deterministic IRQ relay timing.
     sm_config_set_clkdiv_int_frac(&c, 18, 240);
     
     pio_gpio_init(pio, pin);

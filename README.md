@@ -240,8 +240,8 @@ user toggles at runtime via the BOOTSEL button.
 ## Architecture
 
 ```
-   CPC                Pico (128 MHz)                VGA
-   ───                ──────────────                ───
+   CPC               Pico (128 / 160 MHz)             VGA
+   ───               ────────────────────             ───
 
   RGB ──► GPIO 0-5 ──► PIO1 SM1 (rgbin) ──┐
   CSYNC ► GPIO 6  ──► PIO1 SM0 (vsyncgen)─┤
@@ -259,8 +259,14 @@ user toggles at runtime via the BOOTSEL button.
                               PIO0 SM1 (vsync) ► GPIO 13     ─┘
 ```
 
-- **`sys_clock` = 128 MHz** — chosen so 128 ÷ 8 = 16 MHz exact CPC
-  capture clock, matching the CPC pixel rate.
+- **`sys_clock` is mode-dependent:** 128 MHz when the 50/60 Hz switch
+  is set to **50 Hz**, 160 MHz when set to **60 Hz**. main.c reads the
+  switch *before* calling `set_sys_clock_khz()`, so the PLL is right
+  for whichever output mode is active. 128 MHz divides cleanly to
+  16 MHz capture (128 ÷ 8) and matches the upstream 50 Hz timing
+  bit-for-bit; 160 MHz divides cleanly to 40 MHz pixel clock for exact
+  VESA DMT 800×600p60 (160 ÷ 4) and still gives a 16 MHz capture
+  (rgbin SM at clkdiv 1 + 64/256 → 128 MHz × 8 cycles per pixel).
 - **PIO1** runs the capture side: `vsyncgen` discriminates CSYNC into a
   VSYNC level on GPIO 10 (wired back to GPIO 7 on the PCB);
   `rgbin` is a per-line, HSYNC-aligned sampler that pushes one
@@ -321,8 +327,8 @@ the swap has no measurable effect on capture / output performance.
 
 Earlier development versions experimented with monochrome / amber /
 green "P1/P3 phosphor" effects, but they were abandoned because the
-LUT pass through the framebuffer couldn't keep up with the per-line
-capture deadline at 128 MHz.
+LUT pass through the framebuffer couldn't keep up with the per-CPC-line
+capture deadline.
 
 ---
 
@@ -377,21 +383,6 @@ firmware to cancel a power-supply droop. The clean fix is a logic
 buffer (e.g. 74HCT245) between the Pico's GPIOs and the R-2R network,
 or a dedicated 3.3 V analog supply for the DAC.
 
-### Vertical brightness gradient on solid colour backgrounds
-
-Some monitors render an apparently smooth top-to-bottom gradient when
-fed a solid colour fill (e.g. a uniform red border showing red at the
-top and orange/yellow at the bottom). This is not coming from the
-firmware — every pixel byte is identical and the DAC has no temporal
-mechanism that could create a vertical gradient over a frame.
-
-The usual cause is the **monitor itself**: cheap LCD panels often have
-non-uniform backlight or active auto-contrast / auto-colour processing
-that gets confused when a large area of solid colour is paired with a
-contrasting black area in the same frame. The same firmware on a
-different monitor shows the colour as uniform. If you see this, try
-the firmware on a different display before assuming a firmware bug.
-
 ---
 
 ## Optional hardware mods
@@ -429,14 +420,6 @@ and (as a bonus) lets you drive the R-2R from a 5 V swing, which
 extends the DAC's dynamic range and gives slightly cleaner colour
 separation.
 
-### Why no fix for the vertical gradient issue?
-
-Because it's almost certainly the user's monitor, not the firmware
-or the PCB. Test on another display before assuming a hardware
-problem. If it persists across multiple monitors, the suspect is the
-VGA cable (long unshielded cables can pick up power-supply ripple)
-or the monitor's input stage; neither is something this project can
-help with directly.
 
 ---
 

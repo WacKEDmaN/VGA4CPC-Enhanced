@@ -1,73 +1,69 @@
-; HSync for VGA output
-; by gregg, based on Hunter Adam's library 
+; HSync for VGA output — exact VESA DMT 800×600p60 timing.
+;
+; This rewrite (vs. the upstream 8.5-cycles-per-pixel version) drives
+; the SM at exactly 1 cycle per pixel (40 MHz) so every cycle count
+; below maps 1:1 to a pixel of the DMT spec — no fractional cycles,
+; no clock-divider rounding. Drops the upstream's slight pixel-clock
+; overshoot (40.16 MHz) that was the suspect for the colour gradient
+; some monitors showed.
+;
+; DMT 800×600p60 (https://glenwing.github.io/docs/VESA-DMT-1.13.pdf):
+;
+;   pixel clock:     40.000 MHz exactly
+;   active video:    800 px
+;   front porch:     40 px
+;   horiz. sync:    128 px (positive polarity)
+;   back porch:      88 px
+;   ----  total:   1056 px per line  →  37.879 kHz hsync
+;   v_active:       600 lines
+;   v_front:          1 line
+;   v_sync:           4 lines (positive polarity)
+;   v_back:          23 lines
+;   ---- total:     628 lines per frame  →  60.317 Hz refresh
+;
+; At sys_clock = 160 MHz, sm_clkdiv = 4 → SM clock = 40 MHz, so 1 SM
+; cycle = exactly 1 output pixel. Cycle counts below ARE pixel counts.
 
 .program hsync_60
 
-; This program is responsible for generating Hsync for VGA output.
-; It is the first step in the hsync->vsync->rgb pipeline, so the timing is most critical here.
+set pins, 0                 ; once: signal starts low
+pull block                  ; once: CPU pushes (HACT + HFP - 2) = 838
 
-; This version uses DMT timings for 800x600p60 standard.
+.wrap_target                ; loop entered with signal LOW (carryover)
 
-; According to the standard the timing should be (in pixels):
-;
-; total per line:   1056
-; visible:          800
-; front porch:      40
-; hsync signal:     128
-; back porch:       88
-
-; Hsync (and vsync) polarity is +
-
-; Pixel clock is 40Mhz. Clock divider in rgb sm is set to (1+16/256) to make it exactly 1 pixel per 3 cycles. Here the divider is 8.5 (8 times slower).
-; That means we process one pixel in 8/3 cycles.
-; We can convert table above from pixels to cycles:
-;
-; total per line:   396
-; visible:          300
-; front porch:      15
-; hsync signal:     48
-; back porch:       33
-
-
-set pins, 0
-pull block              ; Pull number of instructions for visible+front porch - 2 = 313
-
-.wrap_target
-
-; visible + front porch     1 cycle in "mov" + 314 cycles in loop
+; ---- HACT + HFP — 840 cycles, signal low ----
+;   mov x, osr        :   1 cycle (osr stays = 838)
+;   jmp x-- loop      : 839 cycles (838 taken + 1 fall-through)
+;   total             : 840 cycles
 mov x, osr
 visibleandfront:
-   jmp x-- visibleandfront
+    jmp x-- visibleandfront
 
-; hsync pulse               32 cycles in "set" + 16 cycles in "nop" = 48 cycles in total
-set pins, 1 [31]        ; positive polarity so signal needs to go up
-nop [15]
+; ---- HSYNC pulse — 128 cycles, signal HIGH (positive polarity) ----
+set pins, 1 [31]            ; 32 cycles
+nop [31]                    ; 32
+nop [31]                    ; 32
+nop [31]                    ; 32   → 128 total ✓
 
-; back porch
-; This part is a bit tricky. We need 34 cycles and two operations - set signal back to low and trigger rgb pio to draw pixels.
-; Signal should be switched immediately and other pio should start drawing pixels at the end of this step. But it will not start
-; at the same moment we send irq 0. Exact timing it like that.
-;
-; cycle 1           signal set to high 
-; cycles 2..31      nothing
-; cycle 32          we send irq 0 to vsync state machine
-; cycle 33          we do nothing; vsync state machine sends irq 1 to rgb state machine (that is why it needs the same clock divider)
-; cycle 34          we do nothing; rgb state machine starts drawing pixels
-set pins, 0 [30]
-irq 0 [2]
+; ---- HSYNC back porch — 88 cycles, signal LOW, IRQ 0 near end ----
+; IRQ 0 fires 2 cycles before end of HBP; vsync (running at same SM
+; clock) sees it on its next cycle and raises IRQ 1; rgb (running 4×
+; faster) starts drawing on the cycle after that, putting the first
+; pixel's pin-change at the very start of HACT.
+set pins, 0 [31]            ; 32 cycles
+nop [31]                    ; 32   (cumulative 64)
+nop [21]                    ; 22   (cumulative 86)
+irq 0 [1]                   ;  2   (cumulative 88 ✓)
 
 .wrap
-
 
 
 % c-sdk {
 static inline void hsync_60_program_init(PIO pio, uint sm, uint offset, uint pin) {
     pio_sm_config c = hsync_60_program_get_default_config(offset);
     sm_config_set_set_pins(&c, pin, 1);
-    
-    // Source of this number is explained obove. It must be the same as in vsync sm and be a multiply of rgb sm divider (like in this case),
-    // or there must be no divider in rgb sm. In other case, screen would look terrible (each line is randomly moving horizontally)
-    sm_config_set_clkdiv_int_frac(&c, 8, 128);
+    // sys_clock = 160 MHz, SM clock = 40 MHz exactly (1 cycle = 1 pixel).
+    sm_config_set_clkdiv_int_frac(&c, 4, 0);
     pio_gpio_init(pio, pin);
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
     pio_sm_init(pio, sm, offset, &c);

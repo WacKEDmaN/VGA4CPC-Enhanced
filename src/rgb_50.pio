@@ -3,14 +3,14 @@
 
 .program rgb_50
 
-; This program just sends pixels to VGA. This version handles 720x576p50 output mode in CEA-861 standard. 
+; This program just sends pixels to VGA. This version handles 720x576p50 output mode in CEA-861 standard.
 ; But there is one extra trick added - pixels are sent a bit faster, so in the time that we should send 720 pixels,
 ; we actually send 800, so this way we can show the whole Amstrad screen (at least horizontally) including overscan.
 ; The timings in other state machines follow the timing of 720x576p50 mode so monitor will still detect it as 720x576p50.
 ;
-; We don't set clock divider here, so this state machine runs at full speed - 128Mhz. Pixel clock should be 27Mhz.
-; We want to scale it up by 800/720 = 1.11111 , so the ideal pixel frequency would be 30Mhz.
-; 4 cycles per pixel will give us 32Mhz that is close enough - slightly faster so we will not fill exactly the whole screen.
+; 50 Hz mode runs at sys_clock = 128 MHz. We don't set a clock divider here, so the SM
+; runs at full speed (128 MHz). 4 cycles per pixel gives 32 MHz pixel rate — close
+; enough to the ideal 30 MHz for the 800-into-720 overscan trick.
 
 pull block 					; Pull number of active pixels per line - 1
 mov y, osr 					; And keep value in register y
@@ -20,12 +20,18 @@ mov y, osr 					; And keep value in register y
 set pins, 0 			; Zero RGB pins during blank period (hsync + porches)
 mov x, y                ; x will be used to count cycles
 
-wait 1 irq 1            ; When we get this irq, it means backporch is finished and we should send pixels
+; Wait for hsync's back-porch-end IRQ 1, then delay an extra 31 cycles
+; before pulling the first pixel byte. Without that delay the first
+; pin change lands ~9 captured-pixel-widths BEFORE the monitor's HACT
+; window opens, so those pixels are drawn during HBP and lost. The
+; 31-cycle pad (≈ 8.75 captured pixels at rgb_50's 4-cycle/pixel
+; layout) shifts the first pin change to roughly the start of HACT.
+wait 1 irq 1 [31]
 
-onepixel:                   ; 4 cycles per pixel total:
-	pull block				  ; pull color value  (1 cycle)
-    out pins, 6 [1] 		  ; set output rgb pins (2 cycles)
-	jmp x-- onepixel		  ; repeat for each pixel in line (1 cycle)
+onepixel:                   ; 4 cycles per pixel total (= 32 MHz @ 128 MHz SM clock):
+	pull block				  ; pull color value     (1 cycle)
+    out pins, 6 [1] 		  ; set output rgb pins  (1 cycle + 1 delay = 2)
+	jmp x-- onepixel		  ; repeat for each pixel (1 cycle)
 
 .wrap
 
@@ -37,7 +43,10 @@ static inline void rgb_50_program_init(PIO pio, uint sm, uint offset, uint pin) 
     sm_config_set_out_pins(&c, pin, 6);
     for (int i = 0; i < 6; ++i) {
         pio_gpio_init(pio, pin + i);
-    }    
+    }
+    // 50 Hz mode runs at sys_clock = 128 MHz with no divider (default
+    // clkdiv 1.0) so SM clock = 128 MHz and 4 cycles per pixel gives
+    // a 32 MHz pixel rate, identical to the upstream tuning.
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 6, true);
     pio_sm_init(pio, sm, offset, &c);
 }

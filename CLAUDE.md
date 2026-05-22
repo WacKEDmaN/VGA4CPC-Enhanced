@@ -25,23 +25,38 @@ the Pico's BOOTSEL button (handled by a RAM-resident QSPI-CS-read
 helper in `capture.c`, polled both from the frame-end path and a
 sub-throttled point in the no-signal wait):
 
-- **Short press** (<1.5 s release) → cycle scanlines density 0..3 (off
-  / light / medium / heavy = black row every 6 / 4 / 2 output rows).
+- **Short press** (<1.5 s release) → toggle scanlines on/off. Scanlines
+  on = every odd output row replaced by an all-black line (classic 50 %
+  CRT density). Levels above 1 are accepted by persistence load (so
+  old saved values 2/3 still parse) but treated identically to 1.
 - **Long press** (≥1.5 s release) → cycle right-edge trim 0..3
   (0/32/64/96 px). Overwrites the rightmost N captured pixels of each
   line with the value of pixel 0 (the assumed border colour), hiding
   post-active garbage from CRTC-trickery games like Prehistorik 2.
 
-Both levels (0..3 each) are persisted in the last 4 KB flash sector
-at byte offsets 4 (scanlines) and 5 (trim), behind a 32-bit magic
-header (PERSIST_MAGIC = 0xCAFE4CB7). Old format records (with byte 5
-blank = 0xFF) cleanly upgrade — out-of-range trim defaults to 0. See
-`persist_load()`, `persist_save()`, and `poll_bootsel()` in `capture.c`.
+The BOOTSEL handler **debounces** by ignoring any edge that arrives
+within 20 ms of the previously-accepted edge. Without this, contact
+chatter (1–10 ms) was firing spurious release-edges immediately after
+a press, classifying every long press as a short press and making
+the trim feature unreachable.
+
+Both levels are persisted in the last 4 KB flash sector at byte offsets
+4 (scanlines) and 5 (trim), behind a 32-bit magic header (PERSIST_MAGIC
+= 0xCAFE4CB7). See `persist_load()`, `persist_save()`, and
+`poll_bootsel()` in `capture.c`.
+
+**The 50/60 Hz slide switch is read at boot in main.c** and triggers
+a watchdog reboot if its position changes at runtime. Mode-specific
+sys_clock (128 MHz for 50 Hz, 160 MHz for 60 Hz) means we can't
+hot-swap; the reboot is the natural mechanism. Switch position is
+polled once per CPC frame in the existing per-frame BOOTSEL spot.
 
 True per-pixel content-aware CRT dimming would need a second
-framebuffer (230 KB) which doesn't fit on RP2040 — only density
-variation is implemented here. Side-by-side comparison against
-upstream confirmed this build shows visibly *less* edge fringing.
+framebuffer (230 KB) which doesn't fit on RP2040 — only the off/on
+density toggle is implemented here. Side-by-side comparison against
+upstream confirmed this build shows visibly *less* edge fringing,
+and the exact-DMT 60 Hz timing means many strict VGA monitors that
+struggled with upstream's near-DMT timing now lock cleanly.
 
 The remaining low-grade artefacts are analog (CPC gate-array
 transitions, comparator settling, unbuffered R-2R DAC into VGA cable).
@@ -103,28 +118,43 @@ listing what the extra resources unlock:
 
 ## Important gotchas (don't forget these)
 
-1. **`nop[30]` in `rgbin.pio`** — the post-CSYNC wait must be exactly
-   448 cycles (3.5 µs @ 128 MHz). Off-by-9 cycles was the cause of
-   visible fringing in early builds. **Match upstream timing
-   verbatim** when porting.
-2. **GPIO 10 → GPIO 7 is a hard-wired trace on the PCB** — not
+1. **Per-mode `sys_clock`**: 128 MHz in 50 Hz mode, 160 MHz in 60 Hz
+   mode. main.c reads the switch *before* `set_sys_clock_khz`. All
+   PIO clkdivs in the 50 Hz path are upstream-verbatim and only work
+   at 128 MHz; the 60 Hz path uses integer dividers tuned for 160 MHz
+   (clkdiv 4 → 40 MHz pixel clock exact). rgbin and vsyncgen are
+   used in both modes and pick their clkdiv at runtime via an
+   `is_50hz` parameter passed through `capture_init()`.
+2. **`nop[30]` in `rgbin.pio`** — the post-CSYNC wait must be exactly
+   448 cycles (3.5 µs at 128 MHz effective rgbin SM clock). Off-by-9
+   cycles was the cause of visible fringing in early builds.
+3. **`wait 1 irq 1 [31]` in `rgb_50.pio`** — the 31-cycle delay
+   shifts the first rgb pin-change ~8 captured-pixel-widths later,
+   aligning it with the start of the monitor's HACT instead of
+   ~9 pixels inside HBP (where it would be blanked / lost). Without
+   this delay the leftmost ~9 captured pixels are silently dropped.
+4. **GPIO 10 → GPIO 7 is a hard-wired trace on the PCB** — not
    something users do. Vsyncgen drives GPIO 10, rgbin reads GPIO 7.
    On a non-vga4cpc board this connection needs to exist.
-3. **No-signal detection has two timeouts**:
+5. **No-signal detection has two timeouts**:
    - Inner 200 ms HSYNC watchdog (escapes from a mid-frame stuck
      CSYNC poll when CPC dies mid-line). Without this the inner per-
      line loop blocks forever and the outer timeout never fires.
    - Outer 3 s VSYNC timeout repaints the "NO SIGNAL" card *once*
      (latched by `test_pattern_shown`). Repainting on every check
      causes a periodic tearing flash with output DMA.
-4. **Level-2 sanitiser** in `capture.c`: applies `byte |= (byte >> 1) & 0x15151515`
+6. **BOOTSEL debounce — `DEBOUNCE_US 20000`** — ignores edges within
+   20 ms of the previous one. Without it, contact chatter on press
+   triggers a spurious release-edge a few ms in, classifying a
+   real long-press as a short-press and making trim unreachable.
+7. **Level-2 sanitiser** in `capture.c`: applies `byte |= (byte >> 1) & 0x15151515`
    per word to promote any captured `10` thermometer code (impossible
    on real CPC output, but can appear briefly at edges) to `11`.
    Cheap, ~6 µs per line, runs concurrently with the next line's DMA.
-5. **`__not_in_flash_func`** is on the critical-path functions
+8. **`__not_in_flash_func`** is on the critical-path functions
    (`capture_run_forever`, `sanitize_line`). Keep it on anything in
    the per-line hot path.
-6. **DAC pin order matches the captured bit order exactly**:
+9. **DAC pin order matches the captured bit order exactly**:
    `bit 5 = R_HI, 4 = R_LO, 3 = G_HI, 2 = G_LO, 1 = B_HI, 0 = B_LO`
    on both the input (TLV3202 outputs) and output (GPIO 14–19 → R-2R).
    This is why we can stream raw capture bytes straight to the DAC
@@ -133,9 +163,11 @@ listing what the extra resources unlock:
 ## Build
 
 `build.cmd` on Windows (Pico SDK 1.5.1 at default `C:\Program Files\Raspberry Pi\Pico SDK v1.5.1`).
-On Linux/macOS: `cmake -G Ninja -DPICO_SDK_PATH=... -DSCANLINES=OFF .. && ninja`.
+On Linux/macOS: `cmake -G Ninja -DPICO_SDK_PATH=... .. && ninja`.
 
-`-DSCANLINES=ON` for the CRT-scanlines variant.
+A single UF2 ships both display modes (chosen at boot by the 50/60 Hz
+switch) and both scanline states (toggleable via BOOTSEL short press).
+No compile-time variant flags.
 
 ## File layout
 
