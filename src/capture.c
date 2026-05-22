@@ -22,6 +22,7 @@
 #include "hardware/pwm.h"
 #include "hardware/sync.h"
 #include "hardware/timer.h"
+#include "hardware/watchdog.h"
 #include "hardware/structs/ioqspi.h"
 #include "hardware/structs/sio.h"
 #include "pico/stdlib.h"
@@ -86,7 +87,7 @@ static bool __no_inline_not_in_flash_func(get_bootsel_button)(void) {
 #define PERSIST_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 #define PERSIST_FLASH_ADDR   ((const uint8_t *)(XIP_BASE + PERSIST_FLASH_OFFSET))
 #define PERSIST_MAGIC        0xCAFE4CB7u
-#define SCANLINES_LEVEL_MAX  3
+#define SCANLINES_LEVEL_MAX  1   // 0 = off, 1 = every 2nd line dark
 #define TRIM_LEVEL_MAX       3
 
 // Right-edge trim in pixels for each trim level. Trims overwrite the
@@ -132,28 +133,45 @@ static void persist_save(void) {
 }
 
 // =====================================================================
-// BOOTSEL press handler — short press cycles scanlines, long press
+// BOOTSEL press handler — short press toggles scanlines, long press
 // cycles right-edge trim. Action fires on release, classified by hold
 // duration. Long-press threshold = 1.5 s.
+//
+// Mechanical switches bounce — typically 1-10 ms of fast on/off
+// chatter at every press/release edge. Without debouncing, the first
+// bounce-released spike (a few ms after pressing) would be classified
+// as a short press, cycling scanlines before the user has even let
+// go. We ignore any edge that arrives within DEBOUNCE_US of the
+// previous accepted edge — that masks out all the chatter without
+// touching the real edges' timestamps, so hold-duration measurement
+// stays accurate.
 // =====================================================================
 #define LONG_PRESS_US 1500000u
+#define DEBOUNCE_US    20000u
 
 static bool     s_bootsel_was_pressed   = false;
 static uint32_t s_bootsel_press_start_us = 0;
+static uint32_t s_bootsel_last_edge_us   = 0;
 
 static void poll_bootsel(void) {
     bool now = get_bootsel_button();
-    if (now && !s_bootsel_was_pressed) {
+    if (now == s_bootsel_was_pressed) return;       // no edge
+
+    uint32_t now_us = time_us_32();
+    if ((now_us - s_bootsel_last_edge_us) < DEBOUNCE_US) return;  // bounce
+    s_bootsel_last_edge_us = now_us;
+
+    if (now) {
         // Edge: just pressed — remember when.
-        s_bootsel_press_start_us = time_us_32();
-    } else if (!now && s_bootsel_was_pressed) {
+        s_bootsel_press_start_us = now_us;
+    } else {
         // Edge: just released — classify and act.
-        uint32_t held = time_us_32() - s_bootsel_press_start_us;
+        uint32_t held = now_us - s_bootsel_press_start_us;
         if (held > LONG_PRESS_US) {
             s_trim_level = (s_trim_level + 1) % (TRIM_LEVEL_MAX + 1);
             s_trim_pixels = TRIM_PIXELS[s_trim_level];
         } else {
-            s_scanlines_level = (s_scanlines_level + 1) % (SCANLINES_LEVEL_MAX + 1);
+            s_scanlines_level ^= 1;
             vga_output_set_scanlines(s_scanlines_level);
         }
         persist_save();
@@ -278,9 +296,16 @@ void __not_in_flash_func(capture_run_forever)(void) {
     uint32_t last_vsync_us = time_us_32();
     bool     test_pattern_shown = false;   // true while no-signal card is up
 
+    // Snapshot the 50/60 Hz switch (GPIO 26) position at boot. If the
+    // user flips the switch during runtime, the VGA output PIO programs
+    // and DMA pipeline need reloading — easiest reliable way is a
+    // clean watchdog reboot. Main.c already configured the pin as a
+    // pulled-up input before we got here.
+    bool boot_is_50hz = !gpio_get(PIN_SWITCH);
+
     // Load persisted scanline + trim levels from flash. BOOTSEL presses
     // are classified by hold duration:
-    //   short release (<1.5 s) → cycle scanlines 0..3
+    //   short release (<1.5 s) → toggle scanlines on / off
     //   long  release (≥1.5 s) → cycle right-edge trim 0..3 (0/32/64/96 px)
     persist_load();
     vga_output_set_scanlines(s_scanlines_level);
@@ -353,6 +378,19 @@ void __not_in_flash_func(capture_run_forever)(void) {
         // BOOTSEL check — short release cycles scanlines, long release
         // (≥1.5 s hold) cycles the right-edge trim. Both persist to flash.
         poll_bootsel();
+
+        // 50/60 Hz switch check — reboot cleanly if the user has flipped
+        // the slide switch since power-on. Output PIOs are mode-specific
+        // and can't be hot-swapped, but a watchdog reboot reads the new
+        // switch position at startup and comes up in the new mode. The
+        // GPIO is well past any mechanical bounce by the time we look
+        // (the slide switch transitions in well under 20 ms, and we
+        // only poll here at the per-frame cadence), so no debouncing
+        // is needed.
+        if ((!gpio_get(PIN_SWITCH)) != boot_is_50hz) {
+            watchdog_reboot(0, 0, 0);
+            while (1) tight_loop_contents();   // unreachable
+        }
 
         // Black-fill the tail of the previous frame.
         for (int y = line; y < FB_H; y++) {

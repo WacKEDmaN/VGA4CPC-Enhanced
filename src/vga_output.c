@@ -177,33 +177,15 @@ void vga_output_start(void) {
     dma_channel_start(DMA_CFG_A);
 }
 
-// Set scanline density at runtime by rewriting the odd-indexed entries
-// in the DMA source-pointer ring. Each `line_src[]` slot is a single
-// 32-bit pointer, written atomically on Cortex-M0+, so the output DMA
-// either sees the old pointer or the new one — no torn reads. Worst
-// case is one VGA frame of mixed old/new rows during the switch
-// (~20 ms at 50 Hz), which is imperceptible.
-//
-// Density mapping (`spacing` = output-line stride between black rows):
-//   0 (OFF)     spacing 0  — no black rows
-//   1 (LIGHT)   spacing 6  — black at output rows 5, 11, 17, ...
-//   2 (MEDIUM)  spacing 4  — black at output rows 3, 7, 11, ...
-//   3 (HEAVY)   spacing 2  — black at all odd rows (classic 50% CRT)
-//
-// Scanline positions are always on odd rows so they sit in the "gap"
-// between line-doubled pairs of captured CPC rows, never displacing
-// the primary copy of any captured line.
-void vga_output_set_scanlines(int level) {
-    int spacing;
-    switch (level) {
-        case 1:  spacing = 6; break;
-        case 2:  spacing = 4; break;
-        case 3:  spacing = 2; break;
-        default: spacing = 0; break;
-    }
+// Toggle the CRT-style scanlines effect on or off at runtime. Rewrites
+// the odd-indexed entries of the DMA source-pointer ring; the swap is
+// effectively atomic per slot (a single aligned 32-bit pointer store
+// on Cortex-M0+), so there's no torn output during the transition.
+// Worst case is one VGA frame of mixed normal/scanlined rows during
+// the switch (~20 ms at 50 Hz), which is imperceptible.
+void vga_output_set_scanlines(int enabled) {
     for (int i = 1; i < g_scanline_count; i += 2) {
-        bool make_black = (spacing > 0) && ((i % spacing) == (spacing - 1));
-        line_src[i] = make_black ? black_line
-                                 : framebuf[i / 2 + g_scanline_skip];
+        line_src[i] = enabled ? black_line
+                              : framebuf[i / 2 + g_scanline_skip];
     }
 }

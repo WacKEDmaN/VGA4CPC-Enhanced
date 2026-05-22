@@ -11,13 +11,11 @@ void vga_output_init(bool is_50hz);
 // Enable the SMs and trigger the DMA chain. Call after vga_output_init().
 void vga_output_start(void);
 
-// Set the CRT-style scanline density at runtime.
-//   0 = OFF      no scanlines (smooth line-doubled output)
-//   1 = LIGHT    a black line every 6 output rows  (~17%)
-//   2 = MEDIUM   a black line every 4 output rows  (25%)
-//   3 = HEAVY    a black line every 2 output rows  (50%, classic CRT)
+// Toggle the CRT-style scanlines effect at runtime.
+//   0 = off       no scanlines (smooth line-doubled output)
+//   non-zero      every 2nd output row replaced by a black line
 // Rewrites the odd-indexed entries of the DMA source-pointer ring;
 // each entry is a single 32-bit pointer written atomically, so no
 // torn output during the transition. Safe to call from anywhere
 // except inside an active DMA chain step.
-void vga_output_set_scanlines(int level);
+void vga_output_set_scanlines(int enabled);
