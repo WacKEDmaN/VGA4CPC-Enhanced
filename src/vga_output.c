@@ -21,7 +21,7 @@
 //   PIO0 SM1 (vsync) — counts lines, generates VSYNC, sends IRQ 1 on
 //                      visible lines (tells RGB SM to start drawing)
 //   PIO0 SM2 (rgb)   — pulls one byte per pixel from TX FIFO, drives
-//                      the 6-bit DAC pins. 800 px per line.
+//                      the 6 output pins. 800 px per line.
 //
 // DMA chain (matches reference vga4cpc design):
 //   - Channel A loads next write_addr into main channel (= PIO TX FIFO addr)

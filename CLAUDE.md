@@ -59,7 +59,7 @@ and the exact-DMT 60 Hz timing means many strict VGA monitors that
 struggled with upstream's near-DMT timing now lock cleanly.
 
 The remaining low-grade artefacts are analog (CPC gate-array
-transitions, comparator settling, unbuffered R-2R DAC into VGA cable).
+transitions, comparator settling, unbuffered summing-resistor output into VGA cable).
 Not fixable in firmware on the RP2040 — see README "Known limitations".
 
 ## Next planned work: Pico 2 (RP2350) port
@@ -114,7 +114,7 @@ listing what the extra resources unlock:
   rgb SM, reading each captured row twice in succession for line
   doubling to 576p / 600p.
 - **Framebuffer**: single 288 × 800 byte array, 1 byte per pixel in the
-  DAC's native `RR GG BB` thermometer-code layout. No palette LUT.
+  output network's native `RR GG BB` thermometer-code layout. No palette LUT.
 
 ## Important gotchas (don't forget these)
 
@@ -154,11 +154,18 @@ listing what the extra resources unlock:
 8. **`__not_in_flash_func`** is on the critical-path functions
    (`capture_run_forever`, `sanitize_line`). Keep it on anything in
    the per-line hot path.
-9. **DAC pin order matches the captured bit order exactly**:
-   `bit 5 = R_HI, 4 = R_LO, 3 = G_HI, 2 = G_LO, 1 = B_HI, 0 = B_LO`
-   on both the input (TLV3202 outputs) and output (GPIO 14–19 → R-2R).
-   This is why we can stream raw capture bytes straight to the DAC
-   with no LUT.
+9. **Output network is NOT a binary-weighted R-2R DAC.** Each channel
+   has two equal-value (220 Ω) resistors summing two GPIO pins onto
+   one VGA RGB pin. Equal weighting collapses 4 bit-combinations into
+   3 voltage levels (00→LOW, 01/10→MID, 11→HIGH), giving the CPC's
+   native 3³ = 27-colour palette and *only* 27 colours. The `level 2`
+   code (`10`) is electrically indistinguishable from level 1 (`01`)
+   on this PCB — both produce MID. Don't promise users 64 colours.
+10. **Output pin order matches the captured bit order exactly**:
+    `bit 5 = R_HI, 4 = R_LO, 3 = G_HI, 2 = G_LO, 1 = B_HI, 0 = B_LO`
+    on both the input (TLV3202 comparators) and output (GPIO 14–19
+    into the summing network). This is why we can stream raw capture
+    bytes straight to the output pins with no LUT.
 
 ## Build
 

@@ -3,8 +3,8 @@
 #include <string.h>
 
 // Full 800 × 288 framebuffer. Each byte is one CPC pixel in the layout
-// bits[5:0] = R_HI R_LO G_HI G_LO B_HI B_LO (matches DAC pin order
-// GPIO 14..19 when output via PIO `out pins, 6`).
+// bits[5:0] = R_HI R_LO G_HI G_LO B_HI B_LO (matches the output-network
+// pin order GPIO 14..19 when emitted via PIO `out pins, 6`).
 //
 // 288 × 800 = 230 400 bytes. Fits in RP2040 SRAM (264 KB).
 uint8_t framebuf[FB_H][FB_STRIDE] __attribute__((aligned(4)));
@@ -37,7 +37,14 @@ void fb_new_frame(void) {
 // repainted by the capture loop after >3 s of no CPC sync.
 // =====================================================================
 
-// Pack RR GG BB DAC levels (each 0..3) into one framebuffer byte.
+// Pack RR GG BB pin states (each 0..3, 2 thermometer bits per channel)
+// into one framebuffer byte. The output network is equal-weighted, so
+// only 3 distinct voltage levels per channel are actually produced:
+//   0b00  -> LOW
+//   0b01  -> MID
+//   0b10  -> MID (same as 0b01 — both inputs equal weight)
+//   0b11  -> HIGH
+// 3 levels × 3 channels = 27 native colours.
 #define DAC_RGB(r,g,b) (uint8_t)(((r)<<4) | ((g)<<2) | (b))
 
 static const uint8_t COL_BLACK = DAC_RGB(0,0,0);
@@ -179,10 +186,19 @@ void fb_paint_test_pattern(void) {
         }
     }
 
-    // ----- Greyscale ramp (rows 182..211) — 4 levels × 200 px -----
-    for (uint8_t lvl = 0; lvl < 4; lvl++) {
-        uint16_t x0 = (uint16_t)(lvl * 200);
-        fill_rect(x0, ROW_GREYS, 200, H_GREYS, DAC_RGB(lvl, lvl, lvl));
+    // ----- Greyscale ramp (rows 182..211) — 3 native levels -----
+    // The summing resistor network produces only 3 distinct voltages per
+    // channel (LOW / MID / HIGH), so we show 3 grey cells (black / mid
+    // grey / white) rather than 4. Equal-width: 800 / 3 ≈ 266 px each.
+    {
+        static const uint8_t CPC_LEVELS[3] = {0u, 1u, 3u};   // 0,1,3 native CPC voltages
+        for (int i = 0; i < 3; i++) {
+            uint16_t x0 = (uint16_t)(((uint32_t)i       * FB_W) / 3u);
+            uint16_t x1 = (uint16_t)((((uint32_t)i + 1) * FB_W) / 3u);
+            uint8_t lvl = CPC_LEVELS[i];
+            fill_rect(x0, ROW_GREYS, (uint16_t)(x1 - x0),
+                      H_GREYS, DAC_RGB(lvl, lvl, lvl));
+        }
     }
 
     // ----- "VGA4CPC-ENHANCED" banner (rows 218..258) -----
@@ -191,10 +207,11 @@ void fb_paint_test_pattern(void) {
     draw_text_centred("VGA4CPC-ENHANCED", ROW_BOT_BANNER + 4,
                       /*sx*/3, /*sy*/4, COL_WHITE);
 
-    // ----- Bottom strip: all 27 CPC-native colours (rows 259..287) -----
-    // The CPC's gate array can output 3 voltage levels per channel
-    // (mapping to DAC levels 0, 1, 3), so the full native palette is
-    // 3^3 = 27 combinations. Indexed here in base-3 R*G*B order:
+    // ----- Bottom strip: all 27 native colours (rows 259..287) -----
+    // The CPC's gate array drives 3 voltage levels per channel (which
+    // the PCB's equal-weighted summing network reproduces 1:1 as
+    // LOW/MID/HIGH), so the full native palette is 3^3 = 27 combinations.
+    // Indexed here in base-3 R*G*B order:
     //   cell 0  = (0,0,0) black
     //   cell 26 = (3,3,3) white
     // Each cell is 800/27 ≈ 29.6 px wide, giving a near-square swatch.

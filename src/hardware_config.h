@@ -42,7 +42,7 @@
 // VGA output pin bases (matches the upstream grzegorz-gr/vga4cpc PCB layout)
 #define PIN_VGA_HSYNC    12
 #define PIN_VGA_VSYNC    13
-#define PIN_VGA_RGB_BASE 14   // GPIO 14..19 — 6-bit R-2R DAC
+#define PIN_VGA_RGB_BASE 14   // GPIO 14..19 — 6-bit out into 27-colour summing resistor network
 
 // ---------------------------------------------------------------------
 // System clock — per-mode, chosen at boot based on the 50/60 Hz switch.
@@ -81,7 +81,7 @@
 #define SIG_ABSENT_US    50000
 
 // ---------------------------------------------------------------------
-// Framebuffer: one CPC frame, 1 byte/pixel (2-2-2 DAC value)
+// Framebuffer: one CPC frame, 1 byte/pixel (2-2-2 thermometer-coded RGB)
 // ---------------------------------------------------------------------
 #define FB_W             CPC_ACTIVE_W   // 800
 #define FB_H             CPC_ACTIVE_H   // 288

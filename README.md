@@ -62,7 +62,7 @@ the fly:
 ## Hardware
 
 - Raspberry Pi Pico (RP2040)
-- grzegorz-gr/vga4cpc PCB (TLV3202 dual comparators + 6-bit R-2R DAC)
+- grzegorz-gr/vga4cpc PCB (TLV3202 dual comparators + 27-colour summing resistor network)
 - 50/60 Hz slide switch on GPIO 26
 - LED on GPIO 25 (status / diagnostic)
 
@@ -75,7 +75,7 @@ the fly:
 | 10    | vsyncgen output (PCB internally routes this to GPIO 7) |
 | 12    | VGA HSYNC                                 |
 | 13    | VGA VSYNC                                 |
-| 14–19 | 6-bit R-2R DAC (R/G/B × 2 bits each)      |
+| 14–19 | 27-colour summing network (R/G/B × 2 equal-weighted bits each) |
 | 25    | LED                                       |
 | 26    | 50/60 Hz mode switch (closed/LOW = 50 Hz) |
 
@@ -254,7 +254,7 @@ user toggles at runtime via the BOOTSEL button.
                                      each fb line streamed twice)
                                           │
                                           ▼
-                              PIO0 SM2 (rgb) ──► GPIO 14-19 ──► 6-bit DAC
+                              PIO0 SM2 (rgb) ──► GPIO 14-19 ──► 27-colour network
                               PIO0 SM0 (hsync) ► GPIO 12     ─┐
                               PIO0 SM1 (vsync) ► GPIO 13     ─┘
 ```
@@ -287,7 +287,7 @@ user toggles at runtime via the BOOTSEL button.
 ### Pixel byte layout
 
 CPC's 6-bit thermometer-coded RGB comes out of the comparators in the
-exact bit order the on-board DAC wants:
+exact bit order the output network wants:
 
 ```
   bit 5 4 3 2 1 0
@@ -295,11 +295,33 @@ exact bit order the on-board DAC wants:
 ```
 
 So the capture DMA writes raw 6-bit samples into the framebuffer, and
-the output DMA streams those same bytes to the DAC pins. **No palette
-lookup is needed.** The CPC's three native voltage levels per channel
-map to DAC values 0, 1, and 3 — level 2 (half-bright) is unused by the
-CPC but available to firmware-generated content (e.g. the boot test
-pattern uses it for the white bar).
+the output DMA streams those same bytes to the GPIO pins. **No palette
+lookup is needed.**
+
+The output network on the PCB is **not** a binary-weighted R-2R DAC.
+Each channel has two 220 Ω resistors of **equal value** summing two
+GPIO pins onto one VGA RGB pin. Equal-weighted means the two bits per
+channel collapse into only 3 distinct voltage levels:
+
+| Bits (HI, LO) | Resistor network                 | Output voltage |
+|:---:|:---|:---:|
+| `00` | both GPIOs low      | 0 V (LOW)               |
+| `01` | one GPIO high       | V/2 (MID)               |
+| `10` | one GPIO high       | V/2 (MID — *same as `01`*) |
+| `11` | both GPIOs high     | V (HIGH)                |
+
+Three levels per channel × three channels = **27 native colours** —
+exactly the CPC's native palette. The PCB is sized for the CPC's
+27 inks and nothing more; codes `01` and `10` are electrically
+indistinguishable at the VGA pin.
+
+The level-2 sanitiser in `capture.c` (`byte |= (byte >> 1) & 0x15`
+per word) promotes any transient `10` thermometer code captured at
+edges to `11`. On a binary-weighted DAC this would lift "half-bright"
+glitches up to "bright"; on the equal-weighted network it lifts MID
+to HIGH, which is the right call because the *intent* of a `10`
+glitch is always "the bright value was caught mid-transition, the LO
+bit hasn't risen yet."
 
 ### Horizontal sizing
 
@@ -353,10 +375,9 @@ wrong value caught at each transition drifts slightly between frames
 Side-by-side testing confirms this firmware shows **noticeably less
 fringing than the upstream grzegorz-gr/vga4cpc firmware** on the same
 PCB, so what's here is essentially the best the unbuffered
-comparator and R-2R DAC path can deliver on the original Pico
-(RP2040). On a solid
-colour field (e.g. `CLS`) there are no artefacts at all — the issue is
-strictly transition-related.
+comparator and resistor-network path can deliver on the original
+Pico (RP2040). On a solid colour field (e.g. `CLS`) there are no
+artefacts at all — the issue is strictly transition-related.
 
 > *Note: the fringing is **substantially more pronounced through a
 > VGA-to-HDMI converter + USB capture dongle** (as in the screenshots
@@ -366,22 +387,22 @@ strictly transition-related.
 > CRT or LCD VGA monitor, it's hard to spot from a normal viewing
 > distance.*
 
-### Brightness coupling between colour channels (DAC rail droop)
+### Brightness coupling between colour channels (rail droop)
 
 If you display a solid red background with a border that flashes between
 bright blue and bright red, you may notice the red background subtly
 *pulses* in intensity as the border colour changes. Switching the blue
-channel on at the border momentarily increases the DAC's current draw
-through the R-2R network; the Pico's 3.3 V rail droops a few millivolts
-under the extra load, which pulls the red voltage down at the same
-time. When the border flips back to red, the load drops, the rail
-recovers, and red brightens back up.
+channel on at the border momentarily increases current draw through
+the summing resistor network; the Pico's 3.3 V rail droops a few
+millivolts under the extra load, which pulls the red voltage down at
+the same time. When the border flips back to red, the load drops, the
+rail recovers, and red brightens back up.
 
-This is a **hardware issue with the unbuffered DAC path**, not the
+This is a **hardware issue with the unbuffered output path**, not the
 firmware — every pixel byte is output identically; there's no way for
 firmware to cancel a power-supply droop. The clean fix is a logic
-buffer (e.g. 74HCT245) between the Pico's GPIOs and the R-2R network,
-or a dedicated 3.3 V analog supply for the DAC.
+buffer (e.g. 74HCT245) between the Pico's GPIOs and the resistor
+network, or a dedicated 3.3 V analog supply for it.
 
 ---
 
@@ -390,35 +411,40 @@ or a dedicated 3.3 V analog supply for the DAC.
 The Known limitations above are real but addressable with a small
 hardware addition if they're bothering you. Not required — the
 firmware works as-shipped on a stock vga4cpc PCB — but the buffer
-mod below is the proper fix for the DAC rail droop / cross-channel
+mod below is the proper fix for the rail droop / cross-channel
 coupling issue.
 
-### 74HCT245 / 74HC245 buffer — full DAC decoupling
+### 74HCT245 / 74HC245 buffer — full output decoupling
 
 The proper fix for the cross-channel coupling is to put a logic
-buffer between the Pico's GPIO 14–19 outputs and the R-2R DAC inputs.
-The buffer chip has its own supply pins and presents a tiny gate
-capacitance to the Pico, so the DAC's load no longer pulls on the
-Pico's 3.3 V rail at all.
+buffer between the Pico's GPIO 14–19 outputs and the summing resistor
+network's inputs. The buffer chip has its own supply pins and presents
+a tiny gate capacitance to the Pico, so the network's current load no
+longer pulls on the Pico's 3.3 V rail at all.
+
+Note: a buffer mod does **not** unlock more colours — the network is
+27 colours by design (3 levels × 3 channels) and any buffer just
+restates the same digital values into the same equal-weighted
+resistors. The mod fixes the *cross-channel coupling* artefact, not
+the colour palette.
 
 | Component | Spec | Notes |
 |-----------|------|-------|
 | 74HCT245 (or 74HC245) | Octal bus transceiver, fixed direction | "T" variant has TTL-compatible inputs which are slightly better at 3.3 V drive |
-| Power for the buffer | 5 V from Pico's VBUS (pin 40), or a clean 3.3 V from a separate LDO | Buffer outputs drive the R-2R; 5 V drive gives a wider DAC range |
+| Power for the buffer | 5 V from Pico's VBUS (pin 40), or a clean 3.3 V from a separate LDO | Buffer outputs drive the resistor network |
 | Decoupling | 0.1 µF ceramic at the buffer's VCC pin | Standard practice |
 
 Wire-up:
-- `DIR` = VCC (always Pico → DAC)
+- `DIR` = VCC (always Pico → network)
 - `OE` = GND (always enabled)
 - A1..A6 = Pico GPIO 14..19
-- B1..B6 = R-2R DAC inputs
+- B1..B6 = inputs to the 220 Ω summing resistors
 - B7, B8 unused (tie to GND or leave floating per datasheet)
 
 This is a PCB-level mod — not just an add-on cap — so it's more
-involved. But it eliminates the cross-channel coupling completely,
-and (as a bonus) lets you drive the R-2R from a 5 V swing, which
-extends the DAC's dynamic range and gives slightly cleaner colour
-separation.
+involved. But it eliminates the cross-channel coupling completely.
+Colour count is unchanged (still 27); the network's structure
+determines that, not the source impedance.
 
 
 ---

@@ -8,7 +8,7 @@
 extern uint8_t framebuf[FB_H][FB_STRIDE];
 
 // =====================================================================
-// Single-buffer framebuffer: 800 × 288 bytes (1 byte = 2-2-2 DAC value).
+// Single-buffer framebuffer: 800 × 288 bytes (1 byte = 2-2-2 thermometer-coded RGB).
 // Writer: capture DMA (Core 0, one row per CPC line).
 // Reader: VGA output 4-channel DMA chain (each row read twice in a row
 //         for scan-doubled output).
@@ -23,7 +23,7 @@ void fb_init(void);
 //
 // Layout (top to bottom, totalling FB_H = 288 rows):
 //   "NO SIGNAL" banner → castellation row → 6 colour bars → frequency
-//   burst (8 stripe-density groups) → 4-step greyscale ramp →
+//   burst (8 stripe-density groups) → 3-step greyscale ramp →
 //   "VGA4CPC-ENHANCED" banner → 27-cell strip of every CPC-native colour.
 void fb_paint_test_pattern(void);
 

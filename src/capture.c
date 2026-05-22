@@ -239,22 +239,28 @@ bool capture_signal_present(void) {
 //
 // The captured 6-bit thermometer code is laid out as
 //   bit5=R_HI bit4=R_LO bit3=G_HI bit2=G_LO bit1=B_HI bit0=B_LO
-// which matches our 2-2-2 DAC pinout exactly (bits[5:4]=R, [3:2]=G,
+// which matches our 2-2-2 output pinout exactly (bits[5:4]=R, [3:2]=G,
 // [1:0]=B). The VGA SM emits the raw byte directly — no palette LUT.
 //
 // "Level-2" sanitisation
 // ----------------------
 // The CPC's three native voltage levels per channel produce thermometer
-// codes 00, 01, 11 (DAC levels 0/1/3). The fourth code, 10 (HI bit set
-// but LO not), is NOT a valid CPC level — but it can appear briefly
-// at sharp colour transitions if the rgbin SM samples while the two
-// comparators are mid-flip (HI has swung, LO hasn't yet). On the DAC
-// it maps to half-bright voltage, so a one-pixel halo appears next to
-// every text edge.
+// codes 00, 01, 11 (LOW/MID/HIGH on the output network). The fourth
+// code, 10 (HI bit set but LO not), is NOT a valid CPC level — but it
+// can appear briefly at sharp colour transitions if the rgbin SM samples
+// while the two comparators are mid-flip (HI has swung, LO hasn't yet).
+//
+// On the PCB's equal-weighted summing resistor network, `10` produces
+// the *same* MID voltage as `01`, so a transient `10` would briefly
+// look like a "dim" pixel — visible as a one-pixel halo next to every
+// text edge.
 //
 // Fix: after each line's DMA completes, force LO := LO | HI per channel.
 //   byte |= (byte >> 1) & 0x15
 //   00 → 00, 01 → 01, 10 → 11 (promoted), 11 → 11
+// This relies on the *intent* of a `10` glitch always being "the bright
+// value was caught mid-transition, the LO bit hasn't risen yet" — so
+// promoting to `11` (HIGH) is the right call.
 // Applied 32 bits at a time to the *previous* line, while the current
 // line's DMA is still running (~50 µs in flight, completed well before
 // we touch it). Costs ~6 µs per line; fits in the post-DMA idle window.
