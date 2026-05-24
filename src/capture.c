@@ -207,7 +207,8 @@ void capture_init(bool is_50hz) {
 
     vsyncgen_program_init(CAP_PIO, SM_VSYNCGEN, vsg_offset,
                           PIN_CSYNC, PIN_VSYNC_GEN, is_50hz);
-    rgbin_program_init(CAP_PIO, SM_RGBIN, rgb_offset, PIN_RGB_IN_BASE, is_50hz);
+    rgbin_program_init(CAP_PIO, SM_RGBIN, rgb_offset,
+                       PIN_RGB_IN_BASE, is_50hz);
 
     // Tell the rgbin SM how many pixels to sample per line: CPC_ACTIVE_W - 1
     pio_sm_put_blocking(CAP_PIO, SM_RGBIN, CPC_ACTIVE_W - 1u);

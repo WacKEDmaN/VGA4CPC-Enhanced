@@ -54,10 +54,17 @@ static inline void rgbin_program_init(PIO pio, uint sm, uint offset, uint first_
         pio_gpio_init(pio, first_rgb_pin + i);
     }
     sm_config_set_in_shift(&c, false, false, 6);
-    // Want SM clock = 128 MHz in both modes (so the per-pixel 8-cycle
-    // loop gives an exact 16 MHz capture rate matching the CPC).
-    //   50 Hz mode:  sys_clock = 128 MHz → no divider needed.
-    //   60 Hz mode:  sys_clock = 160 MHz → clkdiv 1 + 64/256 = 1.25.
+    // Per-mode clkdiv:
+    //   50 Hz: clkdiv 1 (integer). sys_clock ≈ 125 MHz via clock_configure
+    //          → SM ~125 MHz → 8 cyc sample = 15.625 MHz, drifts across
+    //          CPC pixels → colour bug fixed.
+    //   60 Hz: clkdiv 1+64/256 = 1.25 (matches HEAD). sys_clock = 160 MHz
+    //          → SM = 128 MHz → 8 cyc = 16 MHz exact sample. This locks
+    //          onto CPC pixel phase (= colour bug) but gives the right
+    //          capture timing for the image to fit the monitor exactly,
+    //          which is the priority for 60 Hz crisp DMT 40 MHz output.
+    //          Accepted trade-off: 60 Hz has colour bug, but image is
+    //          correctly sized.
     if (is_50hz) {
         sm_config_set_clkdiv_int_frac(&c, 1, 0);
     } else {

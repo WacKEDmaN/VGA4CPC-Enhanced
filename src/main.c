@@ -31,7 +31,26 @@ int main(void) {
     sleep_ms(1);
     bool is_50hz = !gpio_get(PIN_SWITCH);
 
-    set_sys_clock_khz(is_50hz ? SYS_CLOCK_KHZ_50HZ : SYS_CLOCK_KHZ_60HZ, true);
+    // *** 50 Hz colour fix via clock_configure() trick ***
+    // clock_configure() does NOT reconfigure the PLL — it just selects
+    // AUX (pll_sys at default ~125 MHz) as clk_sys. The 128 MHz argument
+    // is what the SDK *believes* the clock is — actual is ~125 MHz.
+    // That tiny 3 MHz offset is critical: rgbin sample rate becomes
+    // ~15.625 MHz (vs CPC's 16 MHz pixel rate), so sample phase drifts
+    // across CPC pixels instead of locking onto pixel-edge transitions.
+    // set_sys_clock_khz(128000) would force EXACT 128 MHz and reintroduce
+    // the lock-on colour bug.
+    //
+    // 60 Hz: set_sys_clock_khz(160000) for exact 40 MHz DMT output.
+    // Colour bug present in 60 Hz mode but accepted for crisp display.
+    if (is_50hz) {
+        clock_configure(clk_sys,
+                        CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX,
+                        CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
+                        SYS_CLOCK_KHZ_50HZ * 1000, SYS_CLOCK_KHZ_50HZ * 1000);
+    } else {
+        set_sys_clock_khz(SYS_CLOCK_KHZ_60HZ, true);
+    }
 
     // LED stays off during init — capture_run_forever takes it over
     // and drives it via PWM for the rest of runtime.

@@ -47,20 +47,26 @@ Both levels are persisted in the last 4 KB flash sector at byte offsets
 
 **The 50/60 Hz slide switch is read at boot in main.c** and triggers
 a watchdog reboot if its position changes at runtime. Mode-specific
-sys_clock (128 MHz for 50 Hz, 160 MHz for 60 Hz) means we can't
+sys_clock (~125 MHz for 50 Hz via `clock_configure()` no-op trick,
+160 MHz for 60 Hz via `set_sys_clock_khz()`) means we can't
 hot-swap; the reboot is the natural mechanism. Switch position is
 polled once per CPC frame in the existing per-frame BOOTSEL spot.
 
 True per-pixel content-aware CRT dimming would need a second
 framebuffer (230 KB) which doesn't fit on RP2040 — only the off/on
-density toggle is implemented here. Side-by-side comparison against
-upstream confirmed this build shows visibly *less* edge fringing,
-and the exact-DMT 60 Hz timing means many strict VGA monitors that
-struggled with upstream's near-DMT timing now lock cleanly.
+density toggle is implemented here.
 
-The remaining low-grade artefacts are analog (CPC gate-array
-transitions, comparator settling, unbuffered summing-resistor output into VGA cable).
-Not fixable in firmware on the RP2040 — see README "Known limitations".
+The known limitations are documented in detail in README.md
+("Known limitations" section). The short version: rgbin sampling at
+exactly 16 MHz hits the comparator transition zone on every sample
+of every line (= "paper goes black with bright border"); avoiding
+this requires sample rate ≠ 16 MHz exactly. The clock arithmetic
+(see README) makes it impossible to satisfy that AND have exact
+27/40 MHz output AND integer PIO clkdivs on RP2040, so each mode
+ships with one trade-off: 50 Hz has working colour but mild W-
+aliasing; 60 Hz has crisp exact-DMT output but the lock-on colour
+bug. Pico 2 (RP2350) at higher sys_clock would dissolve the
+constraint — see Pico 2 roadmap.
 
 ## Next planned work: Pico 2 (RP2350) port
 
@@ -118,13 +124,25 @@ listing what the extra resources unlock:
 
 ## Important gotchas (don't forget these)
 
-1. **Per-mode `sys_clock`**: 128 MHz in 50 Hz mode, 160 MHz in 60 Hz
-   mode. main.c reads the switch *before* `set_sys_clock_khz`. All
-   PIO clkdivs in the 50 Hz path are upstream-verbatim and only work
-   at 128 MHz; the 60 Hz path uses integer dividers tuned for 160 MHz
-   (clkdiv 4 → 40 MHz pixel clock exact). rgbin and vsyncgen are
-   used in both modes and pick their clkdiv at runtime via an
-   `is_50hz` parameter passed through `capture_init()`.
+1. **Per-mode `sys_clock`** with a critical twist:
+   - **50 Hz uses `clock_configure()`** with `pll_sys` as the AUX
+     source. This call is essentially a no-op that leaves clk_sys at
+     the boot-default ~125 MHz; the 128 MHz argument is what the SDK
+     *believes* the clock is. The tiny ~3 MHz offset from "exact
+     128" is what makes rgbin's sample rate ~15.625 MHz (vs CPC's
+     16 MHz pixel clock), so sample phase drifts and avoids the
+     lock-on colour bug. **DO NOT** switch this to
+     `set_sys_clock_khz(128000)` — that physically sets exact 128 MHz
+     and reintroduces the bug. See README "Known limitations" for the
+     full math.
+   - **60 Hz uses `set_sys_clock_khz(160000, true)`** for exact
+     160 MHz → 40 MHz output via clkdiv 4. rgbin in 60 Hz mode lands
+     at exactly 16 MHz (via clkdiv 1+64/256 from 160 MHz). That's
+     the lock-on bug — accepted trade-off because exact-DMT 40 MHz
+     output is needed for monitor compatibility at 800×600p60.
+   - main.c reads the switch *before* picking the clock setup. rgbin
+     and vsyncgen are used in both modes and pick their clkdiv at
+     runtime via an `is_50hz` parameter passed through `capture_init()`.
 2. **`nop[30]` in `rgbin.pio`** — the post-CSYNC wait must be exactly
    448 cycles (3.5 µs at 128 MHz effective rgbin SM clock). Off-by-9
    cycles was the cause of visible fringing in early builds.
