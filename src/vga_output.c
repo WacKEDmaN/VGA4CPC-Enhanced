@@ -50,6 +50,7 @@ static uint8_t  black_line[CPC_ACTIVE_W];
 // Captured at init so vga_output_set_scanlines() can rebuild line_src[].
 static int g_scanline_count = 0;   // = lines_to_copy * 2
 static int g_scanline_skip  = 0;   // = skip_lines (CPC line index offset)
+static int g_x_offset       = 0;   // = pixels skipped at left of each row
 
 // Programmed-value constants needed by the PIO SMs (too big for `set x, N`).
 //
@@ -66,7 +67,17 @@ static int g_scanline_skip  = 0;   // = skip_lines (CPC line index offset)
 //   6.76 MHz, 1 SM cycle ≈ 4 pixels): keeps original upstream value.
 #define V_ACTIVE_60_MINUS1     599u
 #define V_ACTIVE_50_MINUS1     575u
-#define RGB_ACTIVE_MINUS1      (CPC_ACTIVE_W - 1u)
+// rgb SM "pixels per active line − 1".
+//   60 Hz: DMT 800x600p60 — 800 captured = 800 visible (1:1).
+//   50 Hz: CEA-861 720x576p50 — pixel clock now 27 MHz (set in
+//          rgb_50.pio) so 1 CPC pixel = 1 monitor pixel. We send
+//          exactly 720 pixels = the full visible HACT; FB_X_CROP_50HZ
+//          chooses *which* 720 of the captured 800 are sent (0 = left-
+//          aligned, 80 = right-aligned, 40 = centred). The other 80
+//          captured pixels are simply not sent (no horizontal squash).
+#define RGB_ACTIVE_60_MINUS1   (CPC_ACTIVE_W - 1u)
+#define VISIBLE_PIXELS_50      720u
+#define RGB_ACTIVE_50_MINUS1   (VISIBLE_PIXELS_50 - 1u)
 #define H_ACTIVE_FRONT_60_M2   838u
 #define H_ACTIVE_FRONT_50_M2   181u
 
@@ -93,14 +104,15 @@ void vga_output_init(bool is_50hz) {
         rgb_50_program_init  (VGA_PIO, SM_VGA_RGB,   rgb_off,   PIN_VGA_RGB_BASE);
         pio_sm_put_blocking(VGA_PIO, SM_VGA_HSYNC, H_ACTIVE_FRONT_50_M2);
         pio_sm_put_blocking(VGA_PIO, SM_VGA_VSYNC, V_ACTIVE_50_MINUS1);
+        pio_sm_put_blocking(VGA_PIO, SM_VGA_RGB,   RGB_ACTIVE_50_MINUS1);
     } else {
         hsync_60_program_init(VGA_PIO, SM_VGA_HSYNC, hsync_off, PIN_VGA_HSYNC);
         vsync_60_program_init(VGA_PIO, SM_VGA_VSYNC, vsync_off, PIN_VGA_VSYNC);
         rgb_60_program_init  (VGA_PIO, SM_VGA_RGB,   rgb_off,   PIN_VGA_RGB_BASE);
         pio_sm_put_blocking(VGA_PIO, SM_VGA_HSYNC, H_ACTIVE_FRONT_60_M2);
         pio_sm_put_blocking(VGA_PIO, SM_VGA_VSYNC, V_ACTIVE_60_MINUS1);
+        pio_sm_put_blocking(VGA_PIO, SM_VGA_RGB,   RGB_ACTIVE_60_MINUS1);
     }
-    pio_sm_put_blocking(VGA_PIO, SM_VGA_RGB, RGB_ACTIVE_MINUS1);
 
     // ------- Build line_dst / line_size / line_src arrays ---------------
     // 50 Hz: skip first 8 CPC lines (top blanking margin), output 576 VGA lines.
@@ -108,22 +120,32 @@ void vga_output_init(bool is_50hz) {
     const int skip_lines = is_50hz ? 8 : 0;
     const int lines_to_copy = (int)CPC_ACTIVE_H - skip_lines;
     const int dst_screen_height = is_50hz ? 576 : 600;
+    // Horizontal start-offset & pixel-count per mode.
+    //   60 Hz: 800 captured → 800 sent → 800 visible (DMT 800x600).
+    //   50 Hz: 800 captured → only 720 sent (the full HACT) → 720
+    //          visible. FB_X_CROP_50HZ picks which 720-of-800 window:
+    //          0 = leftmost captured visible (right border lost),
+    //          80 = rightmost captured visible (left border lost),
+    //          40 = centred.
+    const int x_offset  = is_50hz ? FB_X_CROP_50HZ : 0;
+    const int x_count   = is_50hz ? (int)VISIBLE_PIXELS_50 : CPC_ACTIVE_W;
 
     // CPC × 2 = line-doubled output (each CPC line shown on 2 VGA lines).
     // Initialised as plain NORMAL mode; runtime toggle handled by
     // vga_output_set_scanlines() which rewrites the odd-indexed entries.
     g_scanline_count   = lines_to_copy * 2;
     g_scanline_skip    = skip_lines;
+    g_x_offset         = x_offset;
     for (int i = 0; i < lines_to_copy * 2; i++) {
         line_dst[i]  = &(VGA_PIO->txf[SM_VGA_RGB]);
-        line_src[i]  = framebuf[i / 2 + skip_lines];
-        line_size[i] = CPC_ACTIVE_W;
+        line_src[i]  = framebuf[i / 2 + skip_lines] + x_offset;
+        line_size[i] = x_count;
     }
     // Pad with black lines to fill VGA visible
     for (int i = lines_to_copy * 2; i < dst_screen_height; i++) {
         line_dst[i]  = &(VGA_PIO->txf[SM_VGA_RGB]);
         line_src[i]  = black_line;
-        line_size[i] = CPC_ACTIVE_W;
+        line_size[i] = x_count;
     }
     // Padding to fill the 1024-step ring (DMA writes one dummy byte each)
     for (int i = dst_screen_height; i < 1024; i++) {
@@ -198,6 +220,6 @@ void vga_output_start(void) {
 void vga_output_set_scanlines(int enabled) {
     for (int i = 1; i < g_scanline_count; i += 2) {
         line_src[i] = enabled ? black_line
-                              : framebuf[i / 2 + g_scanline_skip];
+                              : framebuf[i / 2 + g_scanline_skip] + g_x_offset;
     }
 }

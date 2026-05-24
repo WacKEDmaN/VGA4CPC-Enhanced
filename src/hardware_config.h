@@ -87,9 +87,19 @@
 #define FB_H             CPC_ACTIVE_H   // 288
 #define FB_STRIDE        FB_W
 
-// Horizontal crop: CPC captures 800 px per line, VGA shows 640. With
-// FB_X_OFFSET=0 we show pixels 0..639 of the captured line — i.e. from
-// the start of the CPC's back-porch-clear active video, which includes
-// the left border. The rightmost 160 captured pixels (= the right border
-// + front porch) are dropped.
-#define FB_X_OFFSET      0
+// Horizontal start-offset (50 Hz only).
+// CEA-861 720x576p50 has 720 visible columns; CPC captures 800 px/line.
+// rgb_50 now runs at 27 MHz pixel clock so 1 captured pixel = 1 monitor
+// pixel (no squash). We send 720 of the 800 captured pixels per line;
+// FB_X_CROP_50HZ chooses which 720-px window of the captured 800 is
+// shown:
+//   0  → captured 0..719 visible  (full left border, no right border)
+//   40 → captured 40..759 visible (≈ centred — bit of border each side)
+//   80 → captured 80..799 visible (no left border, full right border)
+// Valid range: 0..80. 60 Hz is DMT 800x600 — no offset needed.
+// rgbin.pio's back-porch wait was shortened (8→4 µs) so the sample
+// loop has enough budget at heavier detune values. Side-effect: the
+// first ~64 captured pixels per line are now CPC HBP (border, mostly
+// black) rather than active video. So the useful crop range shifts
+// up by ~64 — 72 = old "50" position approximately.
+#define FB_X_CROP_50HZ   72

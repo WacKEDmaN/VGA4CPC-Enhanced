@@ -1,0 +1,65 @@
+; rgbin_50.pio — CPC RGB capture for 50 Hz output mode.
+;
+; Independent from the 60 Hz variant: each mode has its own back-porch
+; wait length so they can be tuned for their own sys_clock and detune
+; range without one stepping on the other.
+;
+; 50 Hz: sys_clock = 128 MHz. SM clkdiv set in init (per-mode detune
+; table in capture.c may rewrite at runtime). 8 SM cycles per sample.
+; Back porch shortened to 4 µs so heavy detune (down to ~14.3 MHz
+; sample rate) still fits the 800-sample loop inside one 64 µs CPC
+; line. First ~64 captured pixels land in CPC HBP — FB_X_CROP_50HZ
+; in vga_output.c skips them.
+
+.program rgbin_50
+
+    pull block          ; CPU pushes (CPC_ACTIVE_W - 1) once at init
+    mov y, osr          ; per-line sample-count - 1
+
+    wait 1 gpio 10      ; sync to the next frame (VSYNC active)
+
+.wrap_target
+    wait 0 gpio 10      ; wait until VSYNC is over → active video begins
+    wait 0 gpio 6       ; wait for HSYNC start (CSYNC falling)
+
+    ; 3.5 µs pre-csync wait — smooth-scroll tolerance.
+    ;   1 + 13*32 + 31 = 448 cycles @ 128 MHz
+    set x, 12
+waitloop:
+    jmp x--, waitloop [31]
+    nop [30]
+
+    wait 1 gpio 6       ; wait for HSYNC end (CSYNC rising)
+
+    ; Back porch: ~4 µs (shortened to give sample-loop budget at heavy detune)
+    ;   1 + 16*32 + 1 = 514 cycles @ 128 MHz ≈ 4.02 µs
+    set x, 15
+porch:
+    jmp x-- porch [31]
+    nop
+
+    ; 800 pixels — 8 SM cycles each
+    mov x, y
+readpixel:
+    in pins, 6
+    push [5]
+    jmp x-- readpixel
+.wrap
+
+
+% c-sdk {
+static inline void rgbin_50_program_init(PIO pio, uint sm, uint offset, uint first_rgb_pin) {
+    pio_sm_config c = rgbin_50_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, first_rgb_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, first_rgb_pin, 7, false);
+    for (uint i = 0; i < 7; ++i) {
+        pio_gpio_init(pio, first_rgb_pin + i);
+    }
+    sm_config_set_in_shift(&c, false, false, 6);
+    // Default detune: clkdiv 1+24/256 = 1.09375 at sys 128 MHz
+    // → SM 117.27 MHz → 8 cyc sample = 14.66 MHz (−8.4 % off CPC).
+    // capture.c apply_detune() may override at runtime.
+    sm_config_set_clkdiv_int_frac(&c, 1, 24);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

@@ -44,9 +44,13 @@ static inline void rgb_50_program_init(PIO pio, uint sm, uint offset, uint pin) 
     for (int i = 0; i < 6; ++i) {
         pio_gpio_init(pio, pin + i);
     }
-    // 50 Hz mode runs at sys_clock = 128 MHz with no divider (default
-    // clkdiv 1.0) so SM clock = 128 MHz and 4 cycles per pixel gives
-    // a 32 MHz pixel rate, identical to the upstream tuning.
+    // 50 Hz mode runs at sys_clock = 128 MHz. We want CEA-861 720x576p50
+    // pixel clock = 27 MHz so 1 captured CPC pixel = 1 monitor pixel
+    // (no horizontal squash). 4 SM cycles per pixel → SM = 108 MHz →
+    // clkdiv = 128/108 = 1.185185…
+    //   int 1, frac 47/256 = 1.18359  → SM = 108.15 MHz → pixel 27.04 MHz
+    // 0.15 % off CEA-861 spec; well within any monitor's tolerance.
+    sm_config_set_clkdiv_int_frac(&c, 1, 47);
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 6, true);
     pio_sm_init(pio, sm, offset, &c);
 }

@@ -31,23 +31,21 @@ int main(void) {
     sleep_ms(1);
     bool is_50hz = !gpio_get(PIN_SWITCH);
 
-    // *** 50 Hz colour fix via clock_configure() trick ***
-    // clock_configure() does NOT reconfigure the PLL — it just selects
-    // AUX (pll_sys at default ~125 MHz) as clk_sys. The 128 MHz argument
-    // is what the SDK *believes* the clock is — actual is ~125 MHz.
-    // That tiny 3 MHz offset is critical: rgbin sample rate becomes
-    // ~15.625 MHz (vs CPC's 16 MHz pixel rate), so sample phase drifts
-    // across CPC pixels instead of locking onto pixel-edge transitions.
-    // set_sys_clock_khz(128000) would force EXACT 128 MHz and reintroduce
-    // the lock-on colour bug.
+    // Proper PLL-locked sys_clock for both modes — no clock_configure
+    // tricks. 50 Hz mode used to lie to the SDK to get an "accidental"
+    // ~125 MHz sys for capture-clock detune; now that capture has its
+    // own per-mode detune via the rgbin SM clkdiv, all PIO timings can
+    // run at their honest design values and the picture stops being
+    // squashed by the 2.34 % undersample.
     //
-    // 60 Hz: set_sys_clock_khz(160000) for exact 40 MHz DMT output.
-    // Colour bug present in 60 Hz mode but accepted for crisp display.
+    //   50 Hz: exact 128 MHz → hsync_50/vsync_50 clkdiv 18+240/256
+    //          → 6.76 MHz SM (CEA-861-spec 31.25 kHz line rate);
+    //          rgb_50 clkdiv 1.0 → 128 MHz SM → 32 MHz pixel for the
+    //          800-into-720 overscan trick; capture clkdiv detuned
+    //          to break the lock-on bug.
+    //   60 Hz: exact 160 MHz → 40 MHz pixel for DMT 800×600p60.
     if (is_50hz) {
-        clock_configure(clk_sys,
-                        CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX,
-                        CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
-                        SYS_CLOCK_KHZ_50HZ * 1000, SYS_CLOCK_KHZ_50HZ * 1000);
+        set_sys_clock_khz(SYS_CLOCK_KHZ_50HZ, true);
     } else {
         set_sys_clock_khz(SYS_CLOCK_KHZ_60HZ, true);
     }

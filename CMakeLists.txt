@@ -37,8 +37,10 @@ add_executable(vga4cpc_enhanced
     src/vga_output.c
 )
 
-# CPC capture PIO programs
-pico_generate_pio_header(vga4cpc_enhanced ${CMAKE_CURRENT_LIST_DIR}/src/rgbin.pio)
+# CPC capture PIO programs — per-mode (50 Hz and 60 Hz fully independent
+# so each can have its own back-porch wait and sample-loop budget).
+pico_generate_pio_header(vga4cpc_enhanced ${CMAKE_CURRENT_LIST_DIR}/src/rgbin_50.pio)
+pico_generate_pio_header(vga4cpc_enhanced ${CMAKE_CURRENT_LIST_DIR}/src/rgbin_60.pio)
 pico_generate_pio_header(vga4cpc_enhanced ${CMAKE_CURRENT_LIST_DIR}/src/vsyncgen.pio)
 # VGA output PIO programs (50 Hz and 60 Hz variants)
 pico_generate_pio_header(vga4cpc_enhanced ${CMAKE_CURRENT_LIST_DIR}/src/hsync_50.pio)
