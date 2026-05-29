@@ -10,3 +10,6 @@ dist/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
+
+# Internal Claude session notes — local only, intentionally not in the public repo
+CLAUDE.md
