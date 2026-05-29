@@ -75,8 +75,13 @@ static int g_x_offset       = 0;   // = pixels skipped at left of each row
 //          chooses *which* 720 of the captured 800 are sent (0 = left-
 //          aligned, 80 = right-aligned, 40 = centred). The other 80
 //          captured pixels are simply not sent (no horizontal squash).
-#define RGB_ACTIVE_60_MINUS1   (CPC_ACTIVE_W - 1u)
-#define VISIBLE_PIXELS_50      720u
+// Both modes now send CAP_VISIBLE_W (720) captured pixels per line — the
+// rgbin SM captures exactly that many (14.222 MHz, decohered, covers the
+// active line). 50 Hz: 720 px @ 27 MHz fills the 720x576p50 HACT 1:1.
+// 60 Hz: 720 px @ 40 MHz fills 720 of the 800-px DMT HACT (80 px right
+// border — cosmetic, can be centred/stretched later).
+#define RGB_ACTIVE_60_MINUS1   (CAP_VISIBLE_W - 1u)
+#define VISIBLE_PIXELS_50      CAP_VISIBLE_W
 #define RGB_ACTIVE_50_MINUS1   (VISIBLE_PIXELS_50 - 1u)
 #define H_ACTIVE_FRONT_60_M2   838u
 #define H_ACTIVE_FRONT_50_M2   181u
@@ -127,8 +132,10 @@ void vga_output_init(bool is_50hz) {
     //          0 = leftmost captured visible (right border lost),
     //          80 = rightmost captured visible (left border lost),
     //          40 = centred.
-    const int x_offset  = is_50hz ? FB_X_CROP_50HZ : 0;
-    const int x_count   = is_50hz ? (int)VISIBLE_PIXELS_50 : CPC_ACTIVE_W;
+    // Both modes send CAP_VISIBLE_W (720) captured pixels per line, from
+    // the start of the framebuffer row (no left crop).
+    const int x_offset  = 0;
+    const int x_count   = CAP_VISIBLE_W;
 
     // CPC × 2 = line-doubled output (each CPC line shown on 2 VGA lines).
     // Initialised as plain NORMAL mode; runtime toggle handled by

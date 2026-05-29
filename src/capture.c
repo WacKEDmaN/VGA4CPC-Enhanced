@@ -87,68 +87,9 @@ static bool __no_inline_not_in_flash_func(get_bootsel_button)(void) {
 // =====================================================================
 #define PERSIST_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
 #define PERSIST_FLASH_ADDR   ((const uint8_t *)(XIP_BASE + PERSIST_FLASH_OFFSET))
-#define PERSIST_MAGIC        0xCAFE4CC8u   // bump → revert oversample, back to 1× capture
+#define PERSIST_MAGIC        0xCAFE4CCFu   // bump → 14.2MHz decohere, 720 direct-to-output
 #define SCANLINES_LEVEL_MAX  1   // 0 = off, 1 = every 2nd line dark
 #define TRIM_LEVEL_MAX       3
-
-// =====================================================================
-// Runtime-tunable capture-clock divider (both modes).
-//
-// Each idx selects an rgbin SM clkdiv (integer part = 1, fractional
-// part from the per-mode table). Picked at boot from is_50hz; cycled
-// at runtime via BOOTSEL short press.
-//
-// 60 Hz mode — sys_clock = 160 MHz:
-//   idx 0 frac 64 (1.250 ) → 128.00 MHz SM → 16.000 MHz EXACT
-//   idx 1 frac 65          → 127.60 MHz SM → 15.950 MHz (−0.31 %)
-//   idx 2 frac 66          → 127.20 MHz SM → 15.901 MHz (−0.62 %)
-//   idx 3 frac 67          → 126.81 MHz SM → 15.851 MHz (−0.93 %)
-//   idx 4 frac 68          → 126.42 MHz SM → 15.803 MHz (−1.23 %)
-//   idx 5 frac 69          → 126.04 MHz SM → 15.755 MHz (−1.53 %)
-//   idx 6 frac 70          → 125.66 MHz SM → 15.707 MHz (−1.83 %)
-//   idx 7 frac 71          → 125.27 MHz SM → 15.659 MHz (−2.13 %)
-//   idx 8 frac 72          → 124.88 MHz SM → 15.610 MHz (−2.44 %)
-//
-// 50 Hz mode — sys_clock = 128 MHz:
-//   idx 0 frac 16          → 120.47 MHz SM → 15.059 MHz (−5.88 %) ← bug still
-//   idx 1 frac 20          → 118.84 MHz SM → 14.855 MHz (−7.16 %) ← bug still
-//   idx 2 frac 22          → 118.07 MHz SM → 14.759 MHz (−7.76 %)
-//   idx 3 frac 23          → 117.67 MHz SM → 14.709 MHz (−8.07 %)
-//   idx 4 frac 24          → 117.27 MHz SM → 14.659 MHz (−8.38 %) ← default (confirmed working)
-//   idx 5 frac 25          → 116.88 MHz SM → 14.610 MHz (−8.69 %)
-//   idx 6 frac 26          → 116.50 MHz SM → 14.562 MHz (−8.99 %)
-//   idx 7 frac 28          → 115.74 MHz SM → 14.467 MHz (−9.58 %)
-//   idx 8 frac 30          → 114.99 MHz SM → 14.374 MHz (−10.2 %) ← near half-height limit
-//
-// 50 Hz sweet spot is narrow on the reference HW: below frac ~22 the
-// colour bug returns (insufficient phase smearing); above frac ~30
-// the 800-sample loop overruns the 64 µs CPC line and the capture
-// drops every other HSYNC (half-height image). Table is concentrated
-// on the working band so cycling lands cleanly on usable values.
-//
-// At idx 0 the SM locks to the CPC pixel clock and the sample point
-// sits at a fixed phase — usually the comparator-flip window =
-// colour bug, but with zero jitter. Idx 1+ detunes the sample clock
-// so the sample point drifts across CPC pixels every line; bug gone,
-// inherent jitter introduced. The optimum is the SMALLEST idx that
-// reliably breaks lock on the target hardware. Default = idx 2.
-// =====================================================================
-static const uint8_t DETUNE_FRACS_60[] = {
-    64, 65, 66, 67, 68, 69, 70, 71, 72
-};
-static const uint8_t DETUNE_FRACS_50[] = {
-    16, 20, 22, 23, 24, 25, 26, 28, 30
-};
-#define DETUNE_COUNT        (sizeof(DETUNE_FRACS_60) / sizeof(DETUNE_FRACS_60[0]))
-// Separate defaults per mode so we can geometry-test 50 Hz at exact
-// 16 MHz lock (idx 0 = colour bug shows, but the image dimensions
-// should be 100 % correct because nothing's undersampled).
-#define DETUNE_DEFAULT_IDX_60  2
-#define DETUNE_DEFAULT_IDX_50  4   // frac 24 = 14.66 MHz (−8.38 %),
-                                   // confirmed bug-free + full-height on
-                                   // reference HW; mid-table for headroom
-#define DETUNE_DEFAULT_IDX     (s_is_50hz ? DETUNE_DEFAULT_IDX_50 \
-                                          : DETUNE_DEFAULT_IDX_60)
 
 // Right-edge trim in pixels for each trim level. Trims overwrite the
 // rightmost N captured pixels of each line with the value of the
@@ -163,7 +104,6 @@ static const int TRIM_PIXELS[4] = { 0, 32, 64, 96 };
 static int      s_scanlines_level = 0;
 static int      s_trim_level      = 0;
 static volatile int     s_trim_pixels  = 0;   // cached TRIM_PIXELS[s_trim_level]
-static int      s_detune_idx      = 0;   // real value picked in persist_load() after s_is_50hz is set
 static bool     s_is_50hz         = false;    // snapshot of capture_init arg
 
 static void persist_load(void) {
@@ -172,15 +112,11 @@ static void persist_load(void) {
     if (magic != PERSIST_MAGIC) {
         s_scanlines_level = 0;
         s_trim_level      = 0;
-        s_detune_idx      = DETUNE_DEFAULT_IDX;
     } else {
         uint8_t sl = PERSIST_FLASH_ADDR[4];
         uint8_t tr = PERSIST_FLASH_ADDR[5];
-        uint8_t di = PERSIST_FLASH_ADDR[7];
         s_scanlines_level = (sl <= SCANLINES_LEVEL_MAX) ? (int)sl : 0;
         s_trim_level      = (tr <= TRIM_LEVEL_MAX)      ? (int)tr : 0;
-        s_detune_idx      = (di < DETUNE_COUNT)         ? (int)di
-                                                        : DETUNE_DEFAULT_IDX;
     }
     s_trim_pixels = TRIM_PIXELS[s_trim_level];
 }
@@ -192,8 +128,7 @@ static void persist_save(void) {
     memcpy(buf, &magic, sizeof(magic));
     buf[4] = (uint8_t)(s_scanlines_level & 0xFFu);
     buf[5] = (uint8_t)(s_trim_level      & 0xFFu);
-    // buf[6] unused (was filter-mask, removed)
-    buf[7] = (uint8_t)(s_detune_idx      & 0xFFu);
+    // buf[6..] unused
 
     uint32_t flags = save_and_disable_interrupts();
     flash_range_erase(PERSIST_FLASH_OFFSET, FLASH_SECTOR_SIZE);
@@ -201,27 +136,16 @@ static void persist_save(void) {
     restore_interrupts(flags);
 }
 
-// Write the rgbin SM clkdiv register directly so we can re-tune the
-// capture sample rate at runtime without a full PIO re-init. Format:
-// bits 31..16 = integer part, 15..8 = fractional part. Glitch-free in
-// practice (SM keeps running, next cycle uses new rate). The per-mode
-// frac table is picked here so the same idx (0..8) means the same
-// fractional offset from "exact 16 MHz lock" in either mode.
-static void apply_detune(void) {
-    const uint8_t *table = s_is_50hz ? DETUNE_FRACS_50 : DETUNE_FRACS_60;
-    uint8_t frac = table[s_detune_idx];
-    CAP_PIO->sm[SM_RGBIN].clkdiv =
-        (uint32_t)(1u << 16) | ((uint32_t)frac << 8);
-}
+// rgbin program load offset (set in capture_init). 0xFFFF = not loaded.
+static uint rgb_offset = 0xFFFFu;
 
 // =====================================================================
-// BOOTSEL press handler — three press classes by hold duration:
+// BOOTSEL press handler — two press classes by hold duration:
 //
-//   short  (<1.5 s)        cycle DETUNE idx (capture clkdiv frac)
-//   medium (1.5 s..5 s)    cycle right-edge TRIM 0..3
-//   long   (>5 s)          toggle SCANLINES on/off
+//   short (<1.5 s)   toggle SCANLINES on/off
+//   long  (≥1.5 s)   cycle right-edge TRIM 0..3
 //
-// All three persist to flash. Action fires on release.
+// Both persist to flash. Action fires on release.
 //
 // Mechanical switches bounce — typically 1-10 ms of fast on/off
 // chatter at every press/release edge. Without debouncing, the first
@@ -231,8 +155,7 @@ static void apply_detune(void) {
 // out all the chatter without touching the real edges' timestamps,
 // so hold-duration measurement stays accurate.
 // =====================================================================
-#define MEDIUM_PRESS_US  1500000u
-#define LONG_PRESS_US    5000000u
+#define LONG_PRESS_US    1500000u
 #define DEBOUNCE_US        20000u
 
 static bool     s_bootsel_was_pressed   = false;
@@ -254,14 +177,13 @@ static void poll_bootsel(void) {
         // Edge: just released — classify and act.
         uint32_t held = now_us - s_bootsel_press_start_us;
         if (held > LONG_PRESS_US) {
-            s_scanlines_level ^= 1;
-            vga_output_set_scanlines(s_scanlines_level);
-        } else if (held > MEDIUM_PRESS_US) {
+            // Long press → cycle right-edge trim.
             s_trim_level = (s_trim_level + 1) % (TRIM_LEVEL_MAX + 1);
             s_trim_pixels = TRIM_PIXELS[s_trim_level];
         } else {
-            s_detune_idx = (s_detune_idx + 1) % (int)DETUNE_COUNT;
-            apply_detune();
+            // Short press → toggle scanlines.
+            s_scanlines_level ^= 1;
+            vga_output_set_scanlines(s_scanlines_level);
         }
         persist_save();
     }
@@ -283,7 +205,6 @@ static void poll_bootsel(void) {
 // =====================================================================
 
 static int  dma_cap_channel = -1;
-static uint rgb_offset      = 0xFFFFu;
 static uint vsg_offset      = 0xFFFFu;
 
 static volatile uint32_t last_hsync_us = 0;
@@ -305,8 +226,8 @@ void capture_init(bool is_50hz) {
         rgbin_60_program_init(CAP_PIO, SM_RGBIN, rgb_offset, PIN_RGB_IN_BASE);
     }
 
-    // Tell the rgbin SM how many pixels to sample per line: CPC_ACTIVE_W - 1
-    pio_sm_put_blocking(CAP_PIO, SM_RGBIN, CPC_ACTIVE_W - 1u);
+    // Tell the rgbin SM how many samples to take per line (pulled once).
+    pio_sm_put_blocking(CAP_PIO, SM_RGBIN, CAP_VISIBLE_W - 1u);
 
     if (dma_cap_channel < 0)
         dma_cap_channel = dma_claim_unused_channel(true);
@@ -400,13 +321,10 @@ void __not_in_flash_func(capture_run_forever)(void) {
     bool boot_is_50hz = !gpio_get(PIN_SWITCH);
 
     // Load persisted state from flash. BOOTSEL press classes:
-    //   short  (<1.5 s)     cycle DETUNE idx (capture clkdiv)
-    //   medium (1.5–5 s)    cycle right-edge TRIM 0..3
-    //   long   (>5 s)       toggle SCANLINES on/off
+    //   short (<1.5 s)   toggle SCANLINES on/off
+    //   long  (≥1.5 s)   cycle right-edge TRIM 0..3
     persist_load();
     vga_output_set_scanlines(s_scanlines_level);
-    // Apply the persisted detune to the rgbin SM now that PIO is up.
-    apply_detune();
 
     // LED diagnostic (PWM-dimmed to ~half brightness so it's not blindingly
     // bright in a dark room):
@@ -523,6 +441,9 @@ void __not_in_flash_func(capture_run_forever)(void) {
 
             uint8_t *fb = fb_get_write_line((uint16_t)line);
             if (fb) {
+                // DMA this line's CAP_VISIBLE_W samples (14.222 MHz, decohered)
+                // straight into the framebuffer row. No resample — the output
+                // pixel clock stretches them across the visible width.
                 dma_channel_config c = dma_channel_get_default_config((uint)dma_cap_channel);
                 channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
                 channel_config_set_read_increment(&c, false);
@@ -531,7 +452,7 @@ void __not_in_flash_func(capture_run_forever)(void) {
                 dma_channel_configure((uint)dma_cap_channel, &c,
                                       fb,
                                       &CAP_PIO->rxf[SM_RGBIN],
-                                      FB_W,
+                                      CAP_VISIBLE_W,
                                       true);
             }
             // Clean up the previous line (its DMA finished long ago).

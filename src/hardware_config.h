@@ -74,6 +74,16 @@
 #define CPC_ACTIVE_W     800
 #define CPC_ACTIVE_H     288
 
+// Samples captured per line and sent to the output. The rgbin SM samples
+// at 14.222 MHz (128 MHz / 9) — off the CPC's 16 MHz pixel clock so the
+// red colour bug decoheres, while the SM clock stays line-locked (steady,
+// no wobble). At 14.222 MHz, 720 samples span 50.6 µs ≈ the full active
+// line and fit inside the 64 µs CPC line with margin (no dropped lines).
+// These 720 samples are streamed straight to the VGA output (no software
+// resample) — the output pixel clock stretches them across the visible
+// width, so geometry is correct with no per-line CPU cost.
+#define CAP_VISIBLE_W    720
+
 // No-signal detection threshold. Generous so the brief idle gap between
 // capturing the last framebuffer line and the next CPC VSYNC (~3 ms at
 // 50 Hz) doesn't cause signal_present() to flip false and let the test
@@ -97,9 +107,9 @@
 //   40 → captured 40..759 visible (≈ centred — bit of border each side)
 //   80 → captured 80..799 visible (no left border, full right border)
 // Valid range: 0..80. 60 Hz is DMT 800x600 — no offset needed.
-// rgbin.pio's back-porch wait was shortened (8→4 µs) so the sample
-// loop has enough budget at heavier detune values. Side-effect: the
-// first ~64 captured pixels per line are now CPC HBP (border, mostly
-// black) rather than active video. So the useful crop range shifts
-// up by ~64 — 72 = old "50" position approximately.
-#define FB_X_CROP_50HZ   72
+// rgbin_50.pio's back porch is back to ~8 µs (capture now runs at/near
+// exact 16 MHz, so the sample loop fits the CPC line without the old
+// shortened porch). With the longer porch the leading CPC border is no
+// longer captured, so the crop offset that used to skip it drops back
+// toward 0. Starting value — fine-tune against the live picture.
+#define FB_X_CROP_50HZ   8
