@@ -4,13 +4,18 @@ A direct **Amstrad CPC → VGA scan-doubler** firmware for the
 [grzegorz-gr/vga4cpc](https://github.com/grzegorz-gr/vga4cpc) PCB
 (Raspberry Pi Pico based).
 
-Captures the live CPC RGB+CSYNC signal at ~16 MHz, line-doubles it, and
-emits **576p50** or **800×600p60** VGA — full-resolution including
-borders/overscan, with a per-mode runtime-tunable capture clock to
-manage the unavoidable **colour bug ↔ jitter trade-off** that's
-inherent on RP2040 (see *Known limitations* below — locked 16 MHz
-sampling = perfect stability but wrong colours; detuned sampling =
-correct colours but per-pixel jitter).
+Captures the live CPC RGB+CSYNC signal, line-doubles it, and emits
+**576p50** or **800×600p60** VGA — full-resolution including
+borders/overscan, with correct colour and a steady picture.
+
+The CPC's RGB comes through TLV3202 comparators that misbehave when
+sampled at exactly the CPC's 16 MHz pixel rate (the red channel reads
+mid-level as black after a high-red border). This firmware sidesteps
+that by sampling at **14.222 MHz** — deliberately off 16 MHz so the
+effect decoheres — while keeping the sample *clock* locked to a whole
+number of cycles per CPC line so the image stays steady. The captured
+samples are streamed straight to the VGA output, which stretches them
+across the visible width. See *How it works* below for the details.
 
 This is a from-scratch reimplementation of the capture and output
 pipeline using custom PIO programs on both PIO blocks. The VGA-output
@@ -18,8 +23,7 @@ PIO programs (`hsync_50/60`, `vsync_50/60`, `rgb_50/60`) and the
 capture PIOs (`rgbin_50`/`rgbin_60`, `vsyncgen`) are derived from the
 upstream grzegorz-gr/vga4cpc firmware — full credit to **gregg** for
 the original timings and PIO designs. `rgbin` was split into two
-per-mode programs so each can have its own back-porch wait and detune
-range without interfering with the other.
+per-mode programs so each can have its own back-porch timing.
 
 ---
 
@@ -108,8 +112,8 @@ single prebuilt firmware image is committed to [`dist/`](dist/):
 2. Plug the VGA cable into your monitor.
 3. Connect the CPC's RGB cable to the PCB.
 4. Pick the output mode with the slide switch on GPIO 26:
-   - **closed / LOW** → 576p50 (CEA-861, ~50.08 Hz, scaled to ~800px wide)
-   - **open / HIGH**  → 800×600p60 (DMT)
+   - **closed / LOW** → 576p50 (CEA-861 720×576p50)
+   - **open / HIGH**  → 800×600p60 (VESA DMT)
 
    The firmware notices the switch position changing at runtime and
    reboots itself cleanly to apply the new mode (~250 ms blank, then
@@ -117,78 +121,10 @@ single prebuilt firmware image is committed to [`dist/`](dist/):
 
 ### BOOTSEL button — runtime settings
 
-The BOOTSEL button on the Pico drives three settings, distinguished by
+The BOOTSEL button on the Pico drives two settings, distinguished by
 hold duration:
 
-#### Short press (< 1.5 s) — capture-clock detune
-
-Cycles the rgbin sample-clock divider through a per-mode table of
-9 values (idx 0..8). Each value shifts the capture sample rate
-slightly off the CPC's 16 MHz pixel rate — see *Known limitations*
-below for why this knob exists.
-
-Each mode has a different table, chosen at boot from the 50/60 Hz
-switch and tuned to that mode's sys_clock:
-
-| 60 Hz idx | rgbin clkdiv frac | Sample rate | % off 16 MHz |
-|:--:|:--:|:--:|:--:|
-| 0 | 64  | 16.000 MHz | 0 (locked — colour bug) |
-| 1 | 65  | 15.950 MHz | −0.31 % |
-| **2** | **66**  | **15.901 MHz** | **−0.62 % (default)** |
-| 3 | 67  | 15.851 MHz | −0.93 % |
-| 4 | 68  | 15.803 MHz | −1.23 % |
-| 5 | 69  | 15.755 MHz | −1.53 % |
-| 6 | 70  | 15.707 MHz | −1.83 % |
-| 7 | 71  | 15.659 MHz | −2.13 % |
-| 8 | 72  | 15.610 MHz | −2.44 % |
-
-| 50 Hz idx | rgbin clkdiv frac | Sample rate | % off 16 MHz |
-|:--:|:--:|:--:|:--:|
-| 0 | 16 | 15.06 MHz | −5.9 % (often still bug) |
-| 1 | 20 | 14.86 MHz | −7.2 % |
-| 2 | 22 | 14.76 MHz | −7.8 % |
-| 3 | 23 | 14.71 MHz | −8.1 % |
-| **4** | **24** | **14.66 MHz** | **−8.4 % (default)** |
-| 5 | 25 | 14.61 MHz | −8.7 % |
-| 6 | 26 | 14.56 MHz | −9.0 % |
-| 7 | 28 | 14.47 MHz | −9.6 % |
-| 8 | 30 | 14.37 MHz | −10.2 % (near sample-loop overrun) |
-
-Boot uses the default (bolded) value, which works on the reference
-hardware. Different boards may need a different idx — cycle until
-the colour bug disappears, then stop. The smaller the detune the
-better (less inherent jitter).
-
-50 Hz uses much heavier detune than 60 Hz because at sys=128 MHz
-the base clkdiv is near-integer (1.0) and the fractional divider
-needs larger frac values to produce enough sample-phase scatter to
-escape the comparator-transition window. 60 Hz at sys=160 MHz with
-base clkdiv 1.25 inherently has a 5/4 fractional pattern that
-provides phase scatter "for free" — so tiny additional detune is
-enough.
-
-#### Medium press (1.5–5 s) — right-edge trim
-
-Some CPC games (e.g. Prehistorik 2) use CRTC timing tricks that emit
-pixel data past their intended visible area — bytes a real CPC's
-monitor would have hidden via overscan. Our scan-doubler captures
-them verbatim, which can show up as garbage / coloured lines on the
-right edge of the screen.
-
-The right-edge trim overwrites the rightmost N captured pixels of
-each line with the value of the leftmost pixel (assumed to be the
-border colour) — hiding that garbage while preserving the border.
-
-Cycles through four trim levels:
-
-| Trim level | Pixels trimmed | When to use                              |
-|:----------:|:--------------:|:-----------------------------------------|
-| 0 (default) | 0  (off)      | No trim — full 800-pixel capture shown   |
-| 1          | 32             | Mild garbage on the right edge           |
-| 2          | 64             | More noticeable garbage (most games)     |
-| 3          | 96             | Heavy CRTC-trickery games (Prehistorik 2) |
-
-#### Long press (> 5 s) — scanlines toggle
+#### Short press (< 1.5 s) — scanlines toggle
 
 Toggles the CRT-style scanlines effect on or off. With scanlines on,
 every 2nd output row is replaced by a fully black line, giving the
@@ -199,12 +135,32 @@ Note: this firmware can't do true CRT-style content-aware dimming
 needs a second framebuffer's worth of RAM, more than the RP2040
 has spare.
 
+#### Long press (≥ 1.5 s) — right-edge trim
+
+Some CPC games (e.g. Prehistorik 2) use CRTC timing tricks that emit
+pixel data past their intended visible area — bytes a real CPC's
+monitor would have hidden via overscan. Our scan-doubler captures
+them verbatim, which can show up as garbage / coloured lines on the
+right edge of the screen.
+
+The right-edge trim overwrites the rightmost N captured pixels of
+each line with the value of the leftmost pixel (assumed to be the
+border colour) — hiding that garbage while preserving the border.
+Cycles through four trim levels:
+
+| Trim level | Pixels trimmed | When to use                              |
+|:----------:|:--------------:|:-----------------------------------------|
+| 0 (default) | 0  (off)      | No trim — full capture shown             |
+| 1          | 32             | Mild garbage on the right edge           |
+| 2          | 64             | More noticeable garbage (most games)     |
+| 3          | 96             | Heavy CRTC-trickery games (Prehistorik 2) |
+
 #### Persistence
 
-All three settings are **persisted to the last 4 KB sector of the
-Pico's flash**, so they survive power cycles — set your preferences
-once and the firmware boots into the same state next time. First-ever
-boot (blank persistence sector) loads the per-mode defaults shown above.
+Both settings are **persisted to the last 4 KB sector of the Pico's
+flash**, so they survive power cycles — set your preferences once and
+the firmware boots into the same state next time. First-ever boot
+(blank persistence sector) starts with scanlines off and trim off.
 
 The on-board LED (GPIO 25, PWM-dimmed to ~half brightness) indicates
 sync state:
@@ -308,27 +264,24 @@ user toggles at runtime via the BOOTSEL button.
                                     PIO0 SM1 (vsync)     ──► GPIO 13       ─┘
 ```
 
-- **`sys_clock` is per-mode**, both PLL-locked to exact values (no
-  clock-config tricks):
-  - **50 Hz:** `set_sys_clock_khz(128000)` → exact 128 MHz. The 50 Hz
-    output PIOs (`hsync_50`, `vsync_50`, `rgb_50`) were designed for
-    this rate — `rgb_50` clkdiv 1+47/256 ≈ 27.04 MHz pixel for
-    CEA-861 720×576p50 with **1:1 captured-pixel-to-monitor-pixel
-    mapping** (no overscan trick, no horizontal squash). 720 of the
-    800 captured pixels are sent per line; `FB_X_CROP_50HZ` in
-    `hardware_config.h` chooses which 720-wide window (default 72,
-    skips the ~64 captured pixels that are CPC HBP).
+- **`sys_clock` is per-mode**, both PLL-locked to exact values:
+  - **50 Hz:** `set_sys_clock_khz(128000)` → exact 128 MHz. `rgb_50`
+    clkdiv 1+47/256 ≈ 27.04 MHz pixel for CEA-861 720×576p50.
   - **60 Hz:** `set_sys_clock_khz(160000)` → exact 160 MHz. `rgb_60`
-    clkdiv 1.0 → 40 MHz pixel = VESA DMT 800×600p60 exact, all 800
-    captured pixels visible.
-- **Capture clkdiv is runtime-tunable** for both modes (see BOOTSEL
-  short-press above). The 50 Hz and 60 Hz `rgbin_*` PIO programs are
-  independent — each has its own back-porch wait length, so changes
-  to one don't affect the other.
+    clkdiv 1.0 → 40 MHz pixel = VESA DMT 800×600p60 exact.
+- **Capture runs at 14.222 MHz**, not 16 MHz. The rgbin SM clock is
+  128 MHz (60 Hz: clkdiv 1.25 from 160 MHz; 50 Hz: clkdiv 1.0 from
+  128 MHz) and the read loop is 9 SM cycles per sample → 128/9 =
+  14.222 MHz. This is deliberately off the CPC's 16 MHz pixel clock so
+  the comparator colour bug decoheres (see *How it works*). 128 MHz is
+  exactly 8192 cycles per 64 µs CPC line, so the sample phase is
+  line-locked and the image is steady. Both `rgbin_*` programs are
+  independent so each can carry its own back-porch timing.
 - **PIO1** runs the capture side: `vsyncgen` discriminates CSYNC into a
   VSYNC level on GPIO 10 (wired back to GPIO 7 on the PCB);
   `rgbin` is a per-line, HSYNC-aligned sampler that pushes one
-  byte per pixel to its RX FIFO.
+  byte per sample to its RX FIFO. 720 samples per line (`CAP_VISIBLE_W`)
+  span the full active line and are streamed straight to the output.
 - **Core 0** owns the capture loop forever: busy-polls CSYNC and
   VSYNC, fires a fresh DMA per CPC line straight from the RX FIFO
   into a framebuffer row.
@@ -373,27 +326,18 @@ exactly the CPC's native palette. The PCB is sized for the CPC's
 27 inks and nothing more; codes `01` and `10` are electrically
 indistinguishable at the VGA pin.
 
-A per-pixel "level-2 sanitiser" promoting transient `10` codes to
-`11` lived here briefly but was removed — on this hardware
-transients go both directions (LOW and HIGH), so an asymmetric
-upward-only promotion didn't reliably help and sometimes hurt. The
-detune mechanism (see *Known limitations*) is the only thing that
-empirically fixes the bug.
-
 ### Horizontal sizing
 
-CPC captures 800 active pixels per line. Each mode handles them
-differently:
+The rgbin SM captures **720 samples per line** (`CAP_VISIBLE_W`) at
+14.222 MHz, spanning the ~50 µs active line. Those 720 samples are sent
+straight to the VGA output, which stretches them across the visible
+width via its pixel clock — no software resampling:
 
-- **60 Hz** (DMT 800×600p60): all 800 captured pixels map 1:1 to the
-  800 visible columns. Nothing dropped.
-- **50 Hz** (CEA-861 720×576p50): only 720 visible columns available.
-  `rgb_50` pixel clock is tuned to 27.04 MHz (CEA-861 spec) so 1
-  captured pixel = 1 monitor pixel — **no horizontal squash**. 720
-  of the 800 captured pixels are sent per line; `FB_X_CROP_50HZ` in
-  `hardware_config.h` (default 72) chooses which 720-pixel window of
-  the captured 800 is shown. The other 80 captured pixels (mostly
-  CPC HBP and right-edge border) aren't sent.
+- **50 Hz** (CEA-861 720×576p50): `rgb_50` runs at 27 MHz, so 720
+  samples fill the 720-pixel HACT exactly, 1:1.
+- **60 Hz** (DMT 800×600p60): `rgb_60` runs at 40 MHz, so 720 samples
+  fill 720 of the 800-pixel DMT window — leaving a small (~80 px) black
+  border on the right. (Cosmetic; a future revision can widen this.)
 
 ### Display modes
 
@@ -418,127 +362,83 @@ capture deadline.
 
 ---
 
-## Known limitations
-
-### The colour bug ↔ jitter trade-off
-
-This is the central limitation of this firmware on RP2040, and the
-reason the BOOTSEL short-press detune cycle exists. **You can have a
-perfectly stable picture with wrong colours, or correct colours with
-some per-pixel jitter — but not both.** The two states are opposite
-positions on the same single knob (rgbin sample clock vs CPC pixel
-clock), and no firmware filtering or oversampling has been able to
-break the trade-off on this hardware.
-
-#### Root cause: comparator transition zone
+## How it works — beating the comparator colour bug
 
 The TLV3202 comparators on the VGA4CPC PCB convert the CPC's analog
-RGB into a 6-bit thermometer code (2 bits per channel). The
-comparator output settles ~5–10 ns after the input voltage changes —
-the rest of the CPC's 62.5 ns pixel period it's stable. So each
-pixel has a brief "transition zone" at its start while the
-comparators are mid-flip, where the digital output is indeterminate.
-**Transients go both ways** — some pull bits LOW (paper reads black),
-others push bits HIGH (paper reads white-ish). Which way depends on
-the previous pixel and the analog slew direction.
+RGB into a 6-bit thermometer code (2 bits per channel). On the
+reference hardware the **red channel** misbehaves in a very specific
+way: after a sustained **high-red border**, the red comparator's
+mid-level output reads as **black** (R_LO drops) for the rest of the
+line — so mid-red paper that follows a bright-red border turns black.
+Green and blue are unaffected.
 
-#### Why exact 16 MHz lock = colour bug
+The decisive observation: the bug appears **only when the sample rate
+equals the CPC's 16 MHz pixel rate exactly**, at *any* sample phase.
+Shift the sample point within the pixel — bug stays. Change the sample
+*rate* even slightly off 16 MHz — bug vanishes, solidly. That rules out
+a sub-pixel timing issue: it's a **rate-coherence** effect (sampling
+synchronously with the CPC's pixel clock reinforces the comparator
+glitch; sampling at an incommensurate rate averages it out).
 
-If the rgbin sample rate equals the CPC pixel rate **exactly**
-(16 MHz), every one of the 800 samples in a line lands at the *same*
-phase relative to every CPC pixel boundary. If that phase happens to
-fall in the comparator's transition zone, **every captured byte is
-wrong in the same way**, consistently, for the entire frame:
+So this firmware samples at **14.222 MHz** instead of 16 MHz:
 
-```
-  Lock-on (16 MHz exact):     │t│t│t│t│t│t│t│   t = transition zone
-                              every sample at the same bad phase
-                              → uniformly wrong → "colour bug"
-```
+- The rgbin SM clock is **128 MHz**; the read loop is **9 SM cycles per
+  sample** → 128 / 9 = 14.222 MHz. Off 16 MHz → the colour bug
+  decoheres → correct red.
+- Crucially the SM *clock* stays 128 MHz, which is **exactly 8192
+  cycles per 64 µs CPC line**. Because that's a whole number, the
+  sample phase relative to CSYNC is the same every line — so the image
+  is **steady**, not the drifting/jittering mess that changing the
+  clock *divider* (the old "detune") produced.
+- An **8 µs back porch** delays the start of sampling past the red
+  comparator's recovery transient after the border.
+- **720 samples** span the active line and are streamed straight to the
+  output (no resample, no per-line CPU cost); the output pixel clock
+  stretches them to the visible width.
 
-The error is fully consistent → **the picture is rock-stable, just
-wrong.** Paper that should be cyan reads as black; brightness shifts
-when border colour changes; etc. On the reference hardware this
-happens at exact 16 MHz lock in both modes.
+This replaced an earlier "detune" approach that changed the clock
+*divider* to dodge the bug — that worked for colour but the non-integer
+cycles-per-line made the whole image jitter. Moving the rate change
+into the sample *loop length* (keeping the clock integer-per-line) is
+what gives correct colour **and** a steady picture.
 
-#### Why detune = no bug, but jitter
+---
 
-Pulling the sample rate slightly off 16 MHz (via PIO clkdiv) means
-the sample phase **drifts** across CPC pixels — some samples land in
-the transition zone, most don't. Each line, each sample lands at a
-slightly different phase:
+## Known limitations
 
-```
-  Drift:                      │s│s│s│s│t│s│s│   s = stable, t = transition
-                              most samples correct, occasional one
-                              catches a transient
-```
+### Faint whole-line drift
 
-Statistically the correct values dominate, so the colour bug
-disappears. But because the *exact* phase of each sample is now
-sample-dependent, adjacent pixels and adjacent frames have slightly
-different sample positions — visible as **per-pixel jitter / sparkle**
-on text edges and colour boundaries.
+A gentle, slow horizontal sway of the whole image remains. The CPC's
+clock and the Pico's clock are independent crystals running at slightly
+different rates (the CPC is PAL ~50.08 Hz, not exactly 50), so they
+beat against each other and the CSYNC-to-sample-clock alignment creeps.
+It's far less objectionable than the old per-pixel sparkle, but it's
+there. Eliminating it needs true clock recovery — phase-locking the
+sample clock to the CPC — which is being explored on a branch and is a
+natural fit for the Pico 2 (see *Pico 2 roadmap*).
 
-#### Why we can't fix it cleanly on RP2040
+### 60 Hz right-edge border
 
-The obvious fix is **3-sample majority vote per CPC pixel** (sample
-at 48 MHz, output the median of each triplet → bug-immune AND
-jitter-immune). On RP2040 this fails because:
-
-- The PIO sample loop is 8 cycles minimum (in + push + jmp); 3
-  samples per CPC pixel at 8 cycles each would need 384 MHz SM
-  clock — way above silicon limits.
-- 4-cycle-per-sample loops are achievable with autopush, but still
-  need 192 MHz SM to fit 3× oversample in a 62.5 ns CPC pixel.
-- 2-sample combining via OR/AND (which fits the budget) **can't
-  recover the right value** because transients are bidirectional —
-  there's no "stuck at 0" or "stuck at 1" assumption that lets us
-  pick the good sample of a pair.
-
-Pico 2 (RP2350) at 200+ MHz with a third PIO block makes this
-tractable — see the *Pico 2 roadmap* section.
-
-#### What this firmware ships
-
-A per-mode runtime-tunable detune (BOOTSEL short press). Each mode
-has its own table of 9 detune values from the "perfect lock" position
-into the "useful drift" region. Boot defaults are picked from
-reference-hardware empirical testing:
-
-- **60 Hz** default: `clkdiv 1+66/256` ≈ 15.90 MHz (−0.62 %). Just
-  enough detune to break lock on the reference PCB; residual jitter
-  is barely perceptible.
-- **50 Hz** default: `clkdiv 1+24/256` ≈ 14.66 MHz (−8.4 %). Much
-  heavier detune needed because at sys=128 MHz the base clkdiv is
-  near-integer and the fractional divider needs large frac values to
-  produce phase scatter — 50 Hz mode therefore has visibly more
-  inherent jitter than 60 Hz. The 50 Hz "sweet spot" is narrow:
-  below frac ~22 the bug returns; above frac ~30 the 800-sample loop
-  overruns the 64 µs CPC line and the capture drops every other
-  HSYNC (half-height image).
-
-Cycle the detune via BOOTSEL short press to find the value that works
-on your specific hardware. The smaller the detune that still kills
-the bug, the less jitter you'll see.
+720 captured samples fill 720 of the 800-pixel DMT window, leaving a
+small (~80 px) black border on the right in 60 Hz mode. Purely
+cosmetic; a future revision can widen the output to fill it.
 
 ### Right-edge noise from CRTC trickery (Prehistorik 2 etc.)
 
-Some CPC games use CRTC timing tricks that emit pixel data past
-their intended visible area. We capture them verbatim → visible as
-garbage on the right edge. Cycle the right-edge trim (BOOTSEL medium
-press) to clamp the rightmost N captured pixels to border colour.
+Some CPC games use CRTC timing tricks that emit pixel data past their
+intended visible area. We capture them verbatim → visible as garbage on
+the right edge. Use the right-edge trim (BOOTSEL long press) to clamp
+the rightmost N captured pixels to border colour.
 
 ---
 
 ## Optional hardware mods
 
-The Known limitations above are firmware/architectural — a hardware
-mod won't make the colour bug or W-aliasing go away on RP2040. But
-the buffer mod below is still worth considering: it isolates the
-Pico's 3.3 V rail from the summing-network's switching current,
-which reduces analog noise on the input side and *may* slightly
-improve 60 Hz colour stability. Not required.
+The colour bug is fixed in firmware (see *How it works*), so no
+hardware mod is needed for it. The buffer mod below is still worth
+considering for general signal cleanliness: it isolates the Pico's
+3.3 V rail from the summing-network's switching current, reducing
+analog noise on the input side. Optional.
 
 ### 74HCT245 / 74HC245 buffer — full output decoupling
 
@@ -552,8 +452,7 @@ on the input side → slightly cleaner captures.
 Note: the buffer mod does **not** unlock more colours — the network
 is 27 colours by design (3 levels × 3 channels) and the buffer just
 restates the same digital values into the same equal-weighted
-resistors. It also does **not** fix the rgbin lock-on bug
-(that's a clock-arithmetic issue, not an analog one).
+resistors.
 
 | Component | Spec | Notes |
 |-----------|------|-------|
@@ -577,25 +476,21 @@ structure determines that, not the source impedance.
 
 ## Pico 2 roadmap
 
-The PCB is pin-compatible with the **Raspberry Pi Pico 2 (RP2350)**,
-which would let us escape the RP2040's clock-arithmetic corner and
-fix both engineering trade-offs simultaneously:
+The PCB is pin-compatible with the **Raspberry Pi Pico 2 (RP2350)**.
+The colour bug is already solved on RP2040; the main thing the Pico 2
+unlocks is killing the **residual whole-line drift** properly:
 
 | Pico 2 resource           | What it unlocks                                     |
 |---------------------------|-----------------------------------------------------|
-| Up to 300 MHz core clock  | Hit `sys_clock = 432 MHz` (= `LCM(16, 27)`) so 50 Hz mode can have *exact* 27 MHz output AND drifting rgbin sampling simultaneously — both trade-offs gone in one move. 432 MHz exceeds spec but the silicon usually goes there with vreg bump; even 216 MHz (well within Pico 2 spec) lets rgbin run at 13 cyc/sample = 16.6 MHz drift while rgb_50 runs 8 cyc/pixel = 27 MHz. |
-| Cortex-M33 @ 150+ MHz × 2 | Per-line 3-sample majority-vote averaging fits comfortably in the CPC's 64 µs line budget — the proper fix for the 60 Hz colour bug (no lock-on, no oversample loss). |
-| 520 KB SRAM (vs 264 KB)   | Double-buffered framebuffer eliminates output-side tearing race; per-line scratch buffer for the 3-sample averaging path. |
-| 3rd PIO block (12 SMs)    | Dedicated rgbin variants for each mode without juggling the 4-SM PIO1 budget; potentially a CSYNC clock-recovery SM that phase-locks our sample clock to the CPC's pixel clock (which would solve lock-on at any sample rate). |
+| 3rd PIO block (12 SMs)    | A dedicated **CSYNC clock-recovery SM** that phase-locks the sample clock to the CPC's pixel clock — the clean fix for the residual drift, with PIO room to spare (RP2040's PIO1 is nearly full). |
+| Cortex-M33 @ 150+ MHz × 2 | Headroom for a hardware/software PLL on the capture clock, and for per-line post-processing (e.g. multi-sample averaging) within the 64 µs line budget. |
+| 520 KB SRAM (vs 264 KB)   | Double-buffered framebuffer eliminates the output-side tearing race and enables safe post-capture filtering on Core 1. |
+| Higher core clock         | More sample-clock resolution for finer phase control. |
 
-The residual *analog* limitations (comparator settle time, rail
-droop, etc.) live on the PCB and only a hardware mod can address
-them. But every limitation listed in the **Known limitations**
-section above is fundamentally an RP2040 clock-arithmetic problem
-and would go away on RP2350.
-
-No Pico 2 port work has started — this section is here so anyone
-picking up the project knows the way out.
+A first cut of the clock-recovery loop exists on the
+`csync-clock-recovery` branch (a software frequency-locked loop on the
+RP2040). The Pico 2's spare PIO block is the natural home for doing it
+properly in hardware.
 
 ---
 
@@ -606,7 +501,7 @@ picking up the project knows the way out.
   `vsync_*.pio`, `rgb_*.pio`, `rgbin_*.pio` and `vsyncgen.pio`
   programs are derived from that project; `rgbin` was split into
   per-mode `rgbin_50` / `rgbin_60` so each can have its own
-  back-porch wait and detune range.
+  back-porch timing.
 - **Hunter Adams** — the original VGA-from-PIO timing approach the
   upstream firmware credits as its basis.
 - **All C code, build scripts, and documentation in this repository
