@@ -64,9 +64,10 @@ static inline void vsync_60_program_init(PIO pio, uint sm, uint offset, uint pin
     // (irq 1 arrives to rgb sm from here) must be constant and predictable, so can be taken
     // into account in rgb sm. In other case each line will move a bit to the sides and
     // that looks shitty or even unusable.
-    // sys_clock = 160 MHz, SM clock = 40 MHz (must equal hsync_60's
-    // clock so the inter-SM IRQ relay timing stays deterministic).
-    sm_config_set_clkdiv_int_frac(&c, 4, 0);
+    // sys_clock = 240 MHz (overclock). clkdiv 6 → SM = 40 MHz exactly —
+    // MUST equal hsync_60's clkdiv (same value, clean integer) so the
+    // inter-SM IRQ relay timing stays deterministic.
+    sm_config_set_clkdiv_int_frac(&c, 6, 0);
     
     pio_gpio_init(pio, pin);
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);

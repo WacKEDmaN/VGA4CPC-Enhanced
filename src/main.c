@@ -16,34 +16,39 @@
 
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
+#include "hardware/vreg.h"
 #include "hardware_config.h"
 #include "framebuffer.h"
 #include "capture.h"
 #include "vga_output.h"
 
 int main(void) {
-    // Read the 50/60 Hz switch *before* picking sys_clock — the 50 Hz
-    // path keeps the upstream 128 MHz timing untouched, while 60 Hz
-    // wants 160 MHz for exact-DMT 800×600p60.
+    // Read the 50/60 Hz switch *before* picking sys_clock — each mode has
+    // its own independent overclock (chosen so its clocks divide cleanly).
     gpio_init(PIN_SWITCH);
     gpio_set_dir(PIN_SWITCH, GPIO_IN);
     gpio_pull_up(PIN_SWITCH);
     sleep_ms(1);
     bool is_50hz = !gpio_get(PIN_SWITCH);
 
-    // Proper PLL-locked sys_clock for both modes — no clock_configure
-    // tricks. 50 Hz mode used to lie to the SDK to get an "accidental"
-    // ~125 MHz sys for capture-clock detune; now that capture has its
-    // own per-mode detune via the rgbin SM clkdiv, all PIO timings can
-    // run at their honest design values and the picture stops being
-    // squashed by the 2.34 % undersample.
+    // Both modes are overclocked to shrink the rgbin HSYNC-`wait` tick
+    // (the per-line jitter source) while holding a decohered, off-16 MHz
+    // capture rate (the colour fix). The two paths are fully independent:
     //
-    //   50 Hz: exact 128 MHz → hsync_50/vsync_50 clkdiv 18+240/256
-    //          → 6.76 MHz SM (CEA-861-spec 31.25 kHz line rate);
-    //          rgb_50 clkdiv 1.0 → 128 MHz SM → 32 MHz pixel for the
-    //          800-into-720 overscan trick; capture clkdiv detuned
-    //          to break the lock-on bug.
-    //   60 Hz: exact 160 MHz → 40 MHz pixel for DMT 800×600p60.
+    //   50 Hz: 256 MHz (= 128 × 2). Every old divider just doubles, so all
+    //          frequencies are unchanged (27 MHz output, 6.76 MHz sync,
+    //          16 MHz vsyncgen) — the capture stays at the exact proven
+    //          14.222 MHz (256/18) but the tick is 3.9 ns instead of 7.8.
+    //          27 MHz output tolerates the resulting fractional dividers.
+    //   60 Hz: 240 MHz. Chosen so EVERY clock divides to a clean integer
+    //          (40 MHz DMT output = 240/6, vsyncgen = 240/15) — 40 MHz is
+    //          fussy and went fractional/jittery at 256. Capture 14.118 MHz
+    //          (240/17, off 16 by more than 14.222 → still decohered),
+    //          tick 4.2 ns.
+    //
+    // Both need a core-voltage bump; 1.30 V covers 256 and 240.
+    vreg_set_voltage(VREG_VOLTAGE_1_30);
+    sleep_ms(2);                            // let the regulator settle
     if (is_50hz) {
         set_sys_clock_khz(SYS_CLOCK_KHZ_50HZ, true);
     } else {

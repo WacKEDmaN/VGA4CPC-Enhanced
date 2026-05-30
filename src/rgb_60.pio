@@ -5,9 +5,9 @@
 
 ; This program sends pixels to VGA. Exact VESA DMT 800×600p60 timing.
 ;
-; sys_clock = 160 MHz, clkdiv = 1 → SM clock = 160 MHz. With 4 cycles
-; per pixel that gives a pixel clock of exactly 40 MHz — the DMT spec
-; value, not the ~40.16 MHz the upstream 3-cycle version produced.
+; sys_clock = 240 MHz (overclock), clkdiv = 1 → SM clock = 240 MHz. With
+; 6 cycles per pixel that gives a pixel clock of exactly 40 MHz — the DMT
+; spec value. All-integer divide (no fractional output jitter).
 
 pull block 					; Pull number of active pixels per line - 1
 mov y, osr 					; And keep value in register y
@@ -19,9 +19,9 @@ mov x, y                ; x will be used to count cycles
 
 wait 1 irq 1            ; When we get this irq, it means backporch is finished and we should send pixels
 
-onepixel:                   ; 4 cycles per pixel total (= 40 MHz @ 160 MHz SM clock):
+onepixel:                   ; 6 cycles per pixel total (= 40 MHz @ 240 MHz SM clock):
 	pull block				  ; pull color value     (1 cycle)
-    out pins, 6 [1]		      ; set output rgb pins  (1 cycle + 1 delay = 2)
+    out pins, 6 [3]		      ; set output rgb pins  (1 cycle + 3 delay = 4)
 	jmp x-- onepixel		  ; repeat for each pixel (1 cycle)
 
 .wrap
@@ -32,8 +32,9 @@ static inline void rgb_60_program_init(PIO pio, uint sm, uint offset, uint pin) 
     pio_sm_config c = rgb_50_program_get_default_config(offset);
     sm_config_set_set_pins(&c, pin, 6);   // 2 pins per color, 6 in total
     sm_config_set_out_pins(&c, pin, 6);
-    // sys_clock = 160 MHz, clkdiv = 1 → SM clock = 160 MHz → pixel
-    // clock = 160 / 4 = 40 MHz exact (matches DMT 800×600p60 spec).
+    // sys_clock = 240 MHz (overclock), clkdiv = 1 → SM = 240 MHz. With
+    // 6 cycles per pixel that's 240 / 6 = 40 MHz exact (DMT spec) — clean
+    // integer, no fractional output jitter.
     sm_config_set_clkdiv_int_frac(&c, 1, 0);
     for (int i = 0; i < 6; ++i) {
         pio_gpio_init(pio, pin + i);

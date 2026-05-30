@@ -62,8 +62,10 @@ irq 0 [1]                   ;  2   (cumulative 88 ✓)
 static inline void hsync_60_program_init(PIO pio, uint sm, uint offset, uint pin) {
     pio_sm_config c = hsync_60_program_get_default_config(offset);
     sm_config_set_set_pins(&c, pin, 1);
-    // sys_clock = 160 MHz, SM clock = 40 MHz exactly (1 cycle = 1 pixel).
-    sm_config_set_clkdiv_int_frac(&c, 4, 0);
+    // sys_clock = 240 MHz (overclock). clkdiv 6 → SM = 40 MHz exactly
+    // (1 cycle = 1 pixel) — clean integer, counts unchanged from the
+    // 160 MHz/clkdiv-4 version (same 40 MHz SM, no fractional jitter).
+    sm_config_set_clkdiv_int_frac(&c, 6, 0);
     pio_gpio_init(pio, pin);
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
     pio_sm_init(pio, sm, offset, &c);

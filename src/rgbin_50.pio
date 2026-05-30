@@ -1,17 +1,20 @@
 ; rgbin_50.pio — CPC RGB capture for 50 Hz output mode.
 ;
-; 50 Hz: sys_clock = 128 MHz (exact — main.c set_sys_clock_khz). clkdiv
-; 1 + 0/256 = 1.0 → SM clock 128 MHz. readpixel is 9 SM cycles per sample
-; → 128 / 9 = 14.222 MHz sample rate.
+; 50 Hz: sys_clock = 256 MHz (OVERCLOCK, = 128 × 2). clkdiv 1.0 → SM clock
+; = full 256 MHz. The read loop is 18 SM cycles per sample → 256 / 18 =
+; 14.222 MHz — EXACTLY 128/9, the same proven colour-safe rate as the old
+; 128 MHz / 9-cycle build, so the red colour fix is unchanged.
 ;
-; Why 14.222 MHz and not 16: see rgbin_60.pio — sampling at exactly the
-; CPC's 16 MHz makes red mid-level read black after a high-red border;
-; an off-16 MHz rate decoheres it. The SM clock stays 128 MHz (8192
-; cycles per 64 µs CPC line → line-locked phase, steady image).
+; Why overclock: the per-line jitter is the `wait 0 gpio 6` HSYNC re-sync
+; quantising to one SM-clock cycle. At 256 MHz that cycle is 3.9 ns vs
+; 7.8 ns at 128 MHz → the per-line jitter is halved. 256 MHz is exactly
+; 16384 cycles per 64 µs CPC line, so the phase is line-locked. (Needs a
+; core-voltage bump, done in main.c.) Every 50 Hz clock simply doubled
+; from the 128 MHz build, so all output/sync frequencies are unchanged.
 ;
-; ~720 samples (CAP_VISIBLE_W) span 50.6 µs (the full active line) and are
-; streamed straight to the output. 8 µs back porch positions the window
-; past the red comparator's post-border recovery.
+; 720 samples span ~50.6 µs (the active line). pre-csync wait and back
+; porch are re-sized in SM cycles to keep their real-time durations
+; (3.5 µs / 8 µs) now the SM runs at 256 MHz.
 
 .program rgbin_50
 
@@ -25,27 +28,31 @@
     wait 0 gpio 6       ; wait for HSYNC start (CSYNC falling)
 
     ; 3.5 µs pre-csync wait — smooth-scroll tolerance.
-    set x, 12
+    ;   1 + 27*32 + 31 = 896 cycles @ 256 MHz = 3.50 µs
+    set x, 26
 waitloop:
     jmp x--, waitloop [31]
     nop [30]
 
     wait 1 gpio 6       ; wait for HSYNC end (CSYNC rising)
 
-    ; Back porch: ~8 µs. Starting the sample window this late skips the red
-    ; comparator's recovery transient after a high-red border (at ~6 µs the
-    ; early samples land in it and mid-red reads black). 8 µs + 720 samples
-    ; (50.6 µs) + sync fits inside the 64 µs CPC line.
+    ; Back porch: ~8 µs (skips the red comparator's post-border recovery —
+    ; do NOT shorten). `set` immediate maxes at 31, so two loops:
+    ;   2 * (1 + 32*32) + 1 = 2051 cycles @ 256 MHz ≈ 8.01 µs.
     set x, 31
 porch:
     jmp x-- porch [31]
+    set x, 31
+porch2:
+    jmp x-- porch2 [31]
     nop
 
-    ; 9 SM cycles per sample → 128 MHz / 9 = 14.222 MHz (see header).
+    ; 18 SM cycles per sample (1 + push[15]=16 + jmp = 18) → 256/18 =
+    ; 14.222 MHz = 128/9 (exact proven colour rate, finer clock). See header.
     mov x, y
 readpixel:
     in pins, 6
-    push [6]
+    push [15]
     jmp x-- readpixel
 .wrap
 
@@ -59,7 +66,8 @@ static inline void rgbin_50_program_init(PIO pio, uint sm, uint offset, uint fir
         pio_gpio_init(pio, first_rgb_pin + i);
     }
     sm_config_set_in_shift(&c, false, false, 6);
-    // SM clock 128 MHz: clkdiv 1 + 0/256 = 1.0 at sys 128 MHz.
+    // Integer clkdiv 1.0 → full 256 MHz SM (3.9 ns tick). 18-cycle loop
+    // → 14.222 MHz sample rate (= 128/9, the exact proven colour value).
     sm_config_set_clkdiv_int_frac(&c, 1, 0);
     pio_sm_init(pio, sm, offset, &c);
 }

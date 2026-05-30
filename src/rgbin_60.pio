@@ -1,20 +1,20 @@
 ; rgbin_60.pio — CPC RGB capture for 60 Hz output mode.
 ;
-; 60 Hz: sys_clock = 160 MHz. clkdiv 1 + 64/256 = 1.25 → SM clock 128 MHz.
-; readpixel is 9 SM cycles per sample → 128 / 9 = 14.222 MHz sample rate.
+; 60 Hz: sys_clock = 240 MHz (OVERCLOCK). clkdiv 1.0 (integer) → SM clock
+; = full 240 MHz. The read loop is 17 SM cycles per sample → 240 / 17 =
+; 14.118 MHz sample rate. That's off the CPC's 16 MHz pixel clock by more
+; than the proven-good 14.222 MHz, so the red colour fix is preserved
+; (further off 16 = at least as decohered).
 ;
-; Why 14.222 MHz and not 16: sampling at exactly the CPC's 16 MHz pixel
-; clock makes the red channel's mid-level read as black after a high-red
-; border (a rate-coherence effect on this hardware — confirmed: at 16 MHz
-; the bug shows at every sample phase; at any off-16 MHz rate it clears).
-; 14.222 MHz decoheres it. The SM *clock* stays 128 MHz, an exact 8192
-; cycles per 64 µs CPC line, so the sample phase is line-locked and the
-; image is steady (no detune wobble).
+; Why 240 MHz: the per-line jitter is the `wait 0 gpio 6` HSYNC re-sync
+; quantising to one SM-clock cycle. At 240 MHz that cycle is 4.2 ns vs
+; 7.8 ns at the old 160 MHz → roughly half the per-line jitter. And 240
+; divides cleanly for every other clock (output 40 MHz = 240/6, vsyncgen
+; 16 MHz = 240/15) so nothing is fractional. 240 MHz is exactly 15360
+; cycles per 64 µs CPC line → phase line-locked. (Voltage bump in main.c.)
 ;
-; ~720 samples (CAP_VISIBLE_W) span 50.6 µs — the full active line — and
-; are streamed straight to the VGA output (the output pixel clock stretches
-; them across the visible width; no software resample). 8 µs back porch
-; positions the window past the red comparator's post-border recovery.
+; 720 samples span ~51 µs (the active line). pre-csync wait and back porch
+; are sized in SM cycles to keep their real-time durations (3.5 / 8 µs).
 
 .program rgbin_60
 
@@ -28,27 +28,31 @@
     wait 0 gpio 6       ; wait for HSYNC start (CSYNC falling)
 
     ; 3.5 µs pre-csync wait — smooth-scroll tolerance.
-    set x, 12
+    ;   1 + 26*32 + 7 = 840 cycles @ 240 MHz = 3.50 µs
+    set x, 25
 waitloop:
     jmp x--, waitloop [31]
-    nop [30]
+    nop [6]
 
     wait 1 gpio 6       ; wait for HSYNC end (CSYNC rising)
 
-    ; Back porch: ~8 µs. Starting the sample window this late skips the red
-    ; comparator's recovery transient after a high-red border — at ~6 µs the
-    ; early samples land in it and mid-red reads black. 8 µs + 720 samples
-    ; (50.6 µs) + sync fits inside the 64 µs CPC line (no dropped lines).
-    set x, 31
+    ; Back porch: ~8 µs (skips the red comparator's post-border recovery —
+    ; do NOT shorten). `set` immediate maxes at 31, so two loops:
+    ;   2 * (1 + 30*32) + 1 = 1923 cycles @ 240 MHz ≈ 8.01 µs.
+    set x, 29
 porch:
     jmp x-- porch [31]
+    set x, 29
+porch2:
+    jmp x-- porch2 [31]
     nop
 
-    ; 9 SM cycles per sample → 128 MHz / 9 = 14.222 MHz (see header).
+    ; 17 SM cycles per sample (1 + push[14]=15 + jmp = 17) → 240/17 =
+    ; 14.118 MHz (decohered, colour-safe; finer clock = less jitter).
     mov x, y
 readpixel:
     in pins, 6
-    push [6]
+    push [14]
     jmp x-- readpixel
 .wrap
 
@@ -62,8 +66,9 @@ static inline void rgbin_60_program_init(PIO pio, uint sm, uint offset, uint fir
         pio_gpio_init(pio, first_rgb_pin + i);
     }
     sm_config_set_in_shift(&c, false, false, 6);
-    // SM clock 128 MHz: clkdiv 1 + 64/256 = 1.25 at sys 160 MHz.
-    sm_config_set_clkdiv_int_frac(&c, 1, 64);
+    // Integer clkdiv 1.0 → full 240 MHz SM (4.2 ns tick). 17-cycle loop
+    // → 14.118 MHz sample rate (decohered, colour-safe).
+    sm_config_set_clkdiv_int_frac(&c, 1, 0);
     pio_sm_init(pio, sm, offset, &c);
 }
 %}

@@ -47,9 +47,11 @@ static inline void rgb_50_program_init(PIO pio, uint sm, uint offset, uint pin) 
     // 50 Hz mode runs at sys_clock = 128 MHz. CEA-861 720x576p50 pixel
     // clock = 27 MHz. We now send exactly 720 captured pixels per line
     // (CAP_VISIBLE_W), so 720 px @ 27 MHz = 26.67 µs fills the HACT 1:1.
-    // 4 SM cycles per pixel → SM = 108 MHz → clkdiv = 128/108 = 1.18519
-    //   int 1, frac 47/256 = 1.18359 → SM = 108.15 MHz → pixel 27.04 MHz.
-    sm_config_set_clkdiv_int_frac(&c, 1, 47);
+    // sys_clock = 256 MHz (overclock, was 128). clkdiv doubled to hold the
+    // same 108 MHz SM → 27 MHz pixel: 2 + 94/256 = 2.3672 → SM 108.15 MHz
+    // → pixel 27.04 MHz (4 cycles/pixel). 27 MHz tolerates the fractional
+    // divide fine (it already was fractional at 128).
+    sm_config_set_clkdiv_int_frac(&c, 2, 94);
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 6, true);
     pio_sm_init(pio, sm, offset, &c);
 }

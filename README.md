@@ -102,12 +102,22 @@ the fly:
 
 ## Flash & use
 
-**Most users want this section, not the Build section below.** A
-single prebuilt firmware image is committed to [`dist/`](dist/):
+**Most users want this section, not the Build section below.** Two
+prebuilt firmware images are committed to [`dist/`](dist/) — pick one:
 
-- [`dist/vga4cpc_enhanced.uf2`](dist/vga4cpc_enhanced.uf2)
+| File | Clock | Use it if… |
+|---|---|---|
+| [**`VGA4CPC-Enhanced-Overclocked.uf2`**](dist/VGA4CPC-Enhanced-Overclocked.uf2) | 50 Hz: 256 MHz · 60 Hz: 240 MHz | **Recommended.** Sharpest, least text jitter. Works on most RP2040s. |
+| [`vga4cpc_enhanced.uf2`](dist/vga4cpc_enhanced.uf2) | 50 Hz: 128 MHz · 60 Hz: 160 MHz (stock) | Your Pico won't boot / is unstable on the overclocked build, or you'd rather not overclock. |
 
-1. Hold BOOTSEL while plugging the Pico into USB, then drop the
+Both are identical in features and colour; the overclocked build just
+samples on a finer clock tick, which reduces the residual per-line text
+jitter (see *How it works*). The overclock runs the core at 240–256 MHz
+with a small voltage bump — fine on the vast majority of RP2040s, but if
+yours shows no output, garbage, or a boot-loop on the overclocked image,
+flash the stock one instead.
+
+1. Hold BOOTSEL while plugging the Pico into USB, then drop your chosen
    `.uf2` file from `dist/` onto the `RPI-RP2` drive.
 2. Plug the VGA cable into your monitor.
 3. Connect the CPC's RGB cable to the PCB.
@@ -217,11 +227,24 @@ Requirements:
 build.cmd
 ```
 
-Builds the single firmware into `dist\vga4cpc_enhanced.uf2`.
+Builds the **overclocked** firmware into
+`dist\VGA4CPC-Enhanced-Overclocked.uf2` (the source tree is the
+overclocked build).
 
 The script assumes the default Windows SDK path
 (`C:\Program Files\Raspberry Pi\Pico SDK v1.5.1`). Edit the `SDK`
 variable at the top of `build.cmd` if yours lives elsewhere.
+
+**To rebuild the stock (non-overclocked) `vga4cpc_enhanced.uf2`**, check
+out the source from before the overclock, build, and rename:
+
+```cmd
+git checkout 32e841a -- src
+build.cmd        :: now emits the stock clocks; rename the .uf2 back
+```
+
+The committed `dist/vga4cpc_enhanced.uf2` is that stock binary, so most
+people never need to do this.
 
 ### Manual (any platform)
 
@@ -245,8 +268,8 @@ user toggles at runtime via the BOOTSEL button.
 ## Architecture
 
 ```
-   CPC               Pico (128 / 160 MHz)             VGA
-   ───               ────────────────────             ───
+   CPC          Pico (OC: 256/240 MHz, stock: 128/160)   VGA
+   ───          ──────────────────────────────────────   ───
 
   RGB ──► GPIO 0-5 ──► PIO1 SM1 (rgbin_50/60) ──┐
   CSYNC ► GPIO 6  ──► PIO1 SM0 (vsyncgen) ─────┤
@@ -264,19 +287,21 @@ user toggles at runtime via the BOOTSEL button.
                                     PIO0 SM1 (vsync)     ──► GPIO 13       ─┘
 ```
 
-- **`sys_clock` is per-mode**, both PLL-locked to exact values:
-  - **50 Hz:** `set_sys_clock_khz(128000)` → exact 128 MHz. `rgb_50`
-    clkdiv 1+47/256 ≈ 27.04 MHz pixel for CEA-861 720×576p50.
-  - **60 Hz:** `set_sys_clock_khz(160000)` → exact 160 MHz. `rgb_60`
-    clkdiv 1.0 → 40 MHz pixel = VESA DMT 800×600p60 exact.
-- **Capture runs at 14.222 MHz**, not 16 MHz. The rgbin SM clock is
-  128 MHz (60 Hz: clkdiv 1.25 from 160 MHz; 50 Hz: clkdiv 1.0 from
-  128 MHz) and the read loop is 9 SM cycles per sample → 128/9 =
-  14.222 MHz. This is deliberately off the CPC's 16 MHz pixel clock so
-  the comparator colour bug decoheres (see *How it works*). 128 MHz is
-  exactly 8192 cycles per 64 µs CPC line, so the sample phase is
-  line-locked and the image is steady. Both `rgbin_*` programs are
-  independent so each can carry its own back-porch timing.
+- **`sys_clock` is per-mode and per-build** (overclocked / stock), each
+  value chosen so its clocks divide cleanly:
+  - **50 Hz:** 256 MHz overclock (stock 128). `rgb_50` → 27 MHz pixel
+    (CEA-861 720×576p50).
+  - **60 Hz:** 240 MHz overclock (stock 160). `rgb_60` → 40 MHz pixel
+    (VESA DMT 800×600p60); 240 keeps that an integer divide.
+  - The two modes are fully independent — different sys clock, different
+    PIO clkdivs, nothing shared.
+- **Capture runs at ~14.2 MHz**, not 16 MHz (off-16 decoheres the
+  comparator colour bug — see *How it works*). The rgbin read loop is
+  sized per build so the rate lands there: 256/18 = 14.222 MHz (50 Hz),
+  240/17 = 14.118 MHz (60 Hz), 128/9 = 14.222 MHz (stock). The SM clock
+  is a whole number of cycles per 64 µs CPC line, so the sample phase is
+  line-locked and the image is steady. The overclock just makes the
+  per-line `wait` tick finer (≈4 ns vs 7.8), cutting the residual jitter.
 - **PIO1** runs the capture side: `vsyncgen` discriminates CSYNC into a
   VSYNC level on GPIO 10 (wired back to GPIO 7 on the PCB);
   `rgbin` is a per-line, HSYNC-aligned sampler that pushes one
@@ -380,21 +405,21 @@ a sub-pixel timing issue: it's a **rate-coherence** effect (sampling
 synchronously with the CPC's pixel clock reinforces the comparator
 glitch; sampling at an incommensurate rate averages it out).
 
-So this firmware samples at **14.222 MHz** instead of 16 MHz:
+So this firmware samples at roughly **14.2 MHz** instead of 16 MHz:
 
-- The rgbin SM clock is **128 MHz**; the read loop is **9 SM cycles per
-  sample** → 128 / 9 = 14.222 MHz. Off 16 MHz → the colour bug
-  decoheres → correct red.
-- Crucially the SM *clock* stays 128 MHz, which is **exactly 8192
-  cycles per 64 µs CPC line**. Because that's a whole number, the
-  sample phase relative to CSYNC is the same every line — so the image
-  is **steady**, not the drifting/jittering mess that changing the
-  clock *divider* (the old "detune") produced.
+- The read loop is N SM cycles per sample, chosen so the rate lands
+  off 16 MHz → the colour bug decoheres → correct red. (Stock build:
+  128 MHz SM ÷ 9 = 14.222 MHz. Overclocked: 256 ÷ 18 = 14.222 MHz at
+  50 Hz, 240 ÷ 17 = 14.118 MHz at 60 Hz.)
+- Crucially the SM *clock* is a **whole number of cycles per 64 µs CPC
+  line** (e.g. 128 MHz = 8192/line), so the sample phase relative to
+  CSYNC is the same every line — the image is **steady**, not the
+  drifting/jittering mess that changing the clock *divider* (the old
+  "detune") produced.
 - An **8 µs back porch** delays the start of sampling past the red
   comparator's recovery transient after the border.
-- **720 samples** span the active line and are streamed straight to the
-  output (no resample, no per-line CPU cost); the output pixel clock
-  stretches them to the visible width.
+- The captured samples are streamed straight to the output (no resample,
+  no per-line CPU cost); the output pixel clock stretches them to width.
 
 This replaced an earlier "detune" approach that changed the clock
 *divider* to dodge the bug — that worked for colour but the non-integer
@@ -402,20 +427,41 @@ cycles-per-line made the whole image jitter. Moving the rate change
 into the sample *loop length* (keeping the clock integer-per-line) is
 what gives correct colour **and** a steady picture.
 
+### The overclock (why there are two builds)
+
+A tiny residual remains: each line re-syncs to its own HSYNC with the
+`wait` instruction, which can only resolve to **one SM-clock tick**
+(7.8 ns at 128 MHz). Because the Pico's crystal and the CPC's aren't
+locked, that one-tick rounding varies slightly line-to-line → faint
+per-line text shimmer.
+
+Halving the tick halves that shimmer, so the **overclocked build** runs
+each mode at the highest clock where everything still divides cleanly:
+
+| Mode | sys clock | capture tick | how the clocks divide |
+|---|---|---|---|
+| 50 Hz | **256 MHz** (= 128 × 2) | 7.8 → **3.9 ns** | exact ×2 of stock — every frequency unchanged, capture stays exact 14.222 MHz |
+| 60 Hz | **240 MHz** | 7.8 → **4.2 ns** | all-integer: 40 MHz DMT = 240/6, vsyncgen = 240/15 (256 made 40 MHz fractional → output jitter, so 60 Hz uses 240) |
+
+It needs a small core-voltage bump (1.30 V) and runs the core at
+240–256 MHz, which the vast majority of RP2040s handle — but not *all*,
+which is why the **stock 128/160 MHz build is kept** as a fallback.
+
 ---
 
 ## Known limitations
 
-### Faint whole-line drift
+### Faint per-line text shimmer
 
-A gentle, slow horizontal sway of the whole image remains. The CPC's
-clock and the Pico's clock are independent crystals running at slightly
-different rates (the CPC is PAL ~50.08 Hz, not exactly 50), so they
-beat against each other and the CSYNC-to-sample-clock alignment creeps.
-It's far less objectionable than the old per-pixel sparkle, but it's
-there. Eliminating it needs true clock recovery — phase-locking the
-sample clock to the CPC — which is being explored on a branch and is a
-natural fit for the Pico 2 (see *Pico 2 roadmap*).
+A slight per-line horizontal shimmer on text remains. Each line re-syncs
+to its own HSYNC quantised to one capture-clock tick (3.9–4.2 ns on the
+overclocked build), and because the Pico and CPC crystals aren't locked,
+that rounding varies a little line-to-line. The overclock halves it vs
+the stock build, but it can't be eliminated in firmware: the leftover is
+*sub-pixel* and the missing information (sub-tick phase) was never
+captured. Truly removing it needs the sample clock **phase-locked to the
+CPC** (clock recovery) — no fine-enough clock-steering exists on the
+RP2040, so it's a natural fit for the Pico 2 (see *Pico 2 roadmap*).
 
 ### 60 Hz right-edge border
 

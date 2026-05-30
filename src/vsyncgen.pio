@@ -40,9 +40,9 @@ static inline void vsyncgen_program_init(PIO pio, uint sm, uint offset,
     sm_config_set_set_pins(&c, vsync_out_pin, 1);
     // Want SM clock = 16 MHz in both modes (the discriminator's "wait a
     // bit" loop is calibrated for that rate).
-    //   50 Hz mode:  sys_clock = 128 MHz → clkdiv = 8.
-    //   60 Hz mode:  sys_clock = 160 MHz → clkdiv = 10.
-    sm_config_set_clkdiv(&c, is_50hz ? 8.0f : 10.0f);
+    //   50 Hz mode:  sys_clock = 256 MHz (overclock) → clkdiv = 16.
+    //   60 Hz mode:  sys_clock = 240 MHz (overclock) → clkdiv = 15.
+    sm_config_set_clkdiv(&c, is_50hz ? 16.0f : 15.0f);
     pio_gpio_init(pio, csync_in_pin);
     pio_gpio_init(pio, vsync_out_pin);
     pio_sm_set_consecutive_pindirs(pio, sm, csync_in_pin, 1, false);

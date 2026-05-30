@@ -63,8 +63,8 @@
 // rgbin and vsyncgen — which run in both modes — pick their clkdiv
 // at program-init time based on the same switch read.
 // ---------------------------------------------------------------------
-#define SYS_CLOCK_KHZ_50HZ   128000
-#define SYS_CLOCK_KHZ_60HZ   160000
+#define SYS_CLOCK_KHZ_50HZ   256000   // overclock (128×2): finer capture tick
+#define SYS_CLOCK_KHZ_60HZ   240000   // overclock: finer tick, all-integer clocks
 
 // ---------------------------------------------------------------------
 // CPC video signal parameters

@@ -69,9 +69,11 @@ static inline void hsync_50_program_init(PIO pio, uint sm, uint offset, uint pin
 
     // Source of this number is explained obove. It must be the same as in vsync sm and be a multiply of rgb sm divider,
     // or there must be no divider in rgb sm (like in this case). In other case, screen would look terrible (each line is randomly moving horizontally)
-    // 50 Hz mode runs at sys_clock = 128 MHz. clkdiv 18 + 240/256 →
-    // SM clock = 6.76 MHz, matching upstream's tuned 720x576p50 timing.
-    sm_config_set_clkdiv_int_frac(&c, 18, 240);
+    // sys_clock = 256 MHz (overclock, was 128). clkdiv doubled to hold the
+    // same 6.76 MHz SM (CEA-861 720x576p50 timing): 37 + 224/256 = 37.875
+    // → 256/37.875 = 6.76 MHz. Ratio to rgb_50's clkdiv is preserved (both
+    // doubled), so the inter-SM relay stays deterministic. Counts unchanged.
+    sm_config_set_clkdiv_int_frac(&c, 37, 224);
     pio_gpio_init(pio, pin);
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
     pio_sm_init(pio, sm, offset, &c);
